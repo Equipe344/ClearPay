@@ -1,101 +1,142 @@
 import { apiClient, MOCK_MODE, mockDelay } from "./client";
-import { mockPayments } from "../mock/data";
+import { mockPayments, mockUnverifiedPayments, mockContributions } from "../mock/data";
+import { getStoredUser } from "./auth";
 
 /**
- * Expected Django DRF endpoints:
+ * Real Django DRF endpoints:
  *
- * GET  /api/payments/?student_id=:id        -> a student's own payment history
- * GET  /api/payments/?status=pending        (admin) -> verification queue
- * GET  /api/payments/                       (admin) -> all payments
- * POST /api/payments/                       multipart/form-data:
- *        { contribution_id, amount, channel, proof (file), note }
- *      -> { id, reference, status: "pending", proof_url, ... }
- *      Use multipart/form-data because of the proof-of-payment upload.
- *      `proof_url` in every response (list and detail) should be a real,
- *      publicly-fetchable URL to the uploaded file (e.g. Django's MEDIA_URL
- *      path) so the admin verification screen can render it as an image.
- * PATCH /api/payments/:id/verify/           (admin only) { status: "verified" | "rejected", note }
+ * POST /api/payments/initiate/          { contribution_id } -> { reference, checkout_url, ... }
+ *   The backend decides the price — never send an amount from the browser.
+ * GET  /api/payments/verify/:reference/ -> { message, payment: { status: "success"|"pending"|"failed", refund_status, ... } }
+ * GET  /api/payments/history/           (owner) -> list, see shape in mockPayments below
+ * GET  /api/payments/:id/receipt/       (owner) -> one payment
+ * GET  /api/payments/unverified/        (admin) -> { count, results: [...] }
  *
- * "channel" enum should match whatever the department actually accepts,
- * e.g. bank_transfer | pos | cash | online_gateway. If/when a payment
- * gateway (Paystack/Flutterwave) is integrated, add:
- *   POST /api/payments/initialize/  -> { authorization_url, reference }
- *   GET  /api/payments/verify/:reference/ -> confirms + auto-marks as verified
- * so "online_gateway" payments skip manual review entirely.
+ * POST /api/payments/submit/            NOT in the documented contract.
+ *   Restored for the self-reported bank transfer / POS / cash flow with a
+ *   proof upload, same shape as the app's previous (pre-Paystack) payment
+ *   flow. There is no confirmed real endpoint for this — confirm the path
+ *   and field names with the backend before this goes live; until then it
+ *   only works in mock mode. The admin-recorded offline flow in
+ *   contributions.js (`markOfflinePayment`, documented, no proof needed)
+ *   is separate and still works against the real API.
  */
 
-let mockIdCounter = 200;
+let mockRefCounter = 200;
+const mockPendingInitiations = new Map(); // reference -> contribution_id, mock mode only
 
-export async function listPayments({ studentId, status } = {}) {
+export async function initiatePayment(contributionId) {
   if (MOCK_MODE) {
-    await mockDelay();
-    let results = [...mockPayments];
-    if (studentId) results = results.filter((p) => p.student_id === studentId);
-    if (status) results = results.filter((p) => p.status === status);
-    return results.sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+    await mockDelay(500);
+    mockRefCounter += 1;
+    const reference = `PSK-2026-${mockRefCounter}`;
+    mockPendingInitiations.set(reference, contributionId);
+    // In mock mode there's no real Paystack checkout to redirect to, so we
+    // simulate it by sending the browser straight to the callback route,
+    // the same place Paystack would return the student to.
+    return { reference, checkout_url: `/payment/callback?reference=${reference}` };
   }
-  const params = {};
-  if (studentId) params.student_id = studentId;
-  if (status) params.status = status;
-  const { data } = await apiClient.get("/payments/", { params });
+  const { data } = await apiClient.post("/payments/initiate/", { contribution_id: contributionId });
   return data;
 }
 
-export async function submitPayment({ contributionId, studentId, amount, channel, note, proofFile }) {
+export async function verifyPayment(reference) {
   if (MOCK_MODE) {
-    await mockDelay(700);
-    mockIdCounter += 1;
-    const reference = `PMT-2026-${mockIdCounter}`;
+    await mockDelay(600);
+    const existing = mockPayments.find((p) => p.reference === reference);
+    if (existing) {
+      return { message: "Payment already verified.", payment: existing };
+    }
+    // A freshly "paid" mock reference — mark it a success so the demo flow
+    // (Contributions -> pay -> callback -> history) completes end to end.
+    const contributionId = mockPendingInitiations.get(reference) || 5;
+    const contribution = mockContributions.find((c) => c.id === contributionId) || mockContributions[0];
+    const user = getStoredUser();
     const record = {
-      id: reference,
-      contribution_id: contributionId,
-      student_id: studentId,
-      amount,
-      channel,
-      status: channel === "online_gateway" ? "verified" : "pending",
-      // In mock mode there's no server to upload to, so we keep a live,
-      // in-browser preview via createObjectURL — this only lasts for the
-      // current tab/session (it won't survive a refresh). A real backend
-      // would instead return a permanent media URL for `proof_url` here.
-      proof_url: proofFile ? URL.createObjectURL(proofFile) : null,
-      proof_name: proofFile ? proofFile.name : null,
+      id: mockPayments.length + 100,
       reference,
-      submitted_at: new Date().toISOString(),
-      verified_at: channel === "online_gateway" ? new Date().toISOString() : null,
-      verified_by: channel === "online_gateway" ? "System (auto)" : null,
-      note: note || "",
+      contribution: contribution.title,
+      contribution_id: contribution.id,
+      student_matric: user?.matric_number || "CSC/2021/041",
+      amount: contribution.amount,
+      status: "success",
+      verified_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      method: "online",
+      refund_status: "none",
+    };
+    mockPayments.unshift(record);
+    return { message: "Payment verified.", payment: record };
+  }
+  const { data } = await apiClient.get(`/payments/verify/${reference}/`);
+  return data;
+}
+
+// Self-reported bank transfer / POS / cash, with a proof screenshot/photo.
+// Goes in as "pending" for manual review — there's no auto-verify for these.
+export async function submitPayment({ contributionId, channel, note, proofFile }) {
+  if (MOCK_MODE) {
+    await mockDelay(600);
+    const contribution = mockContributions.find((c) => c.id === contributionId);
+    if (!contribution) throw new Error("Contribution not found.");
+    const user = getStoredUser();
+    const record = {
+      id: mockPayments.length + 200,
+      reference: `SELF-${Date.now()}`,
+      contribution: contribution.title,
+      contribution_id: contribution.id,
+      student_matric: user?.matric_number || "",
+      amount: contribution.amount,
+      status: "pending",
+      verified_at: null,
+      created_at: new Date().toISOString(),
+      method: "manual",
+      channel,
+      note,
+      proof_file_name: proofFile?.name || null,
+      refund_status: "none",
     };
     mockPayments.unshift(record);
     return record;
   }
-
   const form = new FormData();
   form.append("contribution_id", contributionId);
-  form.append("amount", amount);
   form.append("channel", channel);
   if (note) form.append("note", note);
   if (proofFile) form.append("proof", proofFile);
-
-  const { data } = await apiClient.post("/payments/", form, {
+  const { data } = await apiClient.post("/payments/submit/", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return data;
 }
 
-export async function verifyPayment(paymentId, { status, note }) {
+export async function listHistory() {
   if (MOCK_MODE) {
     await mockDelay();
-    const idx = mockPayments.findIndex((p) => p.id === paymentId);
-    if (idx === -1) throw new Error("Payment not found.");
-    mockPayments[idx] = {
-      ...mockPayments[idx],
-      status,
-      note: note ?? mockPayments[idx].note,
-      verified_at: new Date().toISOString(),
-      verified_by: "Mr. Femi Ade",
-    };
-    return mockPayments[idx];
+    return [...mockPayments].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }
-  const { data } = await apiClient.patch(`/payments/${paymentId}/verify/`, { status, note });
+  const { data } = await apiClient.get("/payments/history/");
+  return data;
+}
+
+export async function getReceipt(paymentId) {
+  if (MOCK_MODE) {
+    await mockDelay();
+    const payment = mockPayments.find((p) => p.id === paymentId);
+    if (!payment) throw new Error("Payment not found.");
+    return payment;
+  }
+  const { data } = await apiClient.get(`/payments/${paymentId}/receipt/`);
+  return data;
+}
+
+// { count, results: [...] } — the one endpoint that keeps the `results`
+// wrapper other list endpoints don't have.
+export async function getUnverifiedPayments() {
+  if (MOCK_MODE) {
+    await mockDelay();
+    return { count: mockUnverifiedPayments.length, results: [...mockUnverifiedPayments] };
+  }
+  const { data } = await apiClient.get("/payments/unverified/");
   return data;
 }

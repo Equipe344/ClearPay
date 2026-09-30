@@ -1,63 +1,136 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../../components/AppShell";
 import StatusBadge from "../../components/StatusBadge";
-import { listStudents, getAnalyticsSummary } from "../../api/students";
-import { CURRENT_SESSION } from "../../constants";
+import { listContributions, getContributionSummary, getContributionPayments, markOfflinePayment } from "../../api/contributions";
+import { getErrorMessage } from "../../api/client";
 
 const FILTERS = [
   { key: "all", label: "All" },
-  { key: "paid", label: "Paid" },
+  { key: "success", label: "Paid" },
   { key: "unpaid", label: "Unpaid" },
 ];
 
-export default function AdminDashboard() {
-  const [students, setStudents] = useState([]);
+function OfflineForm({ contributionId, onRecorded }) {
+  const [matric, setMatric] = useState("");
+  const [receipt, setReceipt] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setSaving(true);
+    try {
+      await markOfflinePayment(contributionId, { matric_number: matric, receipt_reference: receipt });
+      setMatric("");
+      setReceipt("");
+      onRecorded();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18 }}>
+      <div className="field" style={{ margin: 0, flex: "1 1 180px" }}>
+        <label>Matric number</label>
+        <input required value={matric} onChange={(e) => setMatric(e.target.value)} placeholder="CSC/2021/045" />
+      </div>
+      <div className="field" style={{ margin: 0, flex: "1 1 180px" }}>
+        <label>Receipt reference</label>
+        <input required value={receipt} onChange={(e) => setReceipt(e.target.value)} placeholder="Teller slip or receipt no." />
+      </div>
+      <button className="btn btn-sm" type="submit" disabled={saving}>
+        {saving ? "Saving…" : "Mark as paid (offline)"}
+      </button>
+      {error && <div className="banner error" style={{ flexBasis: "100%" }}>{error}</div>}
+    </form>
+  );
+}
+
+export default function Overview() {
+  const [contributions, setContributions] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [rows, setRows] = useState([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [rowsLoading, setRowsLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    listStudents({ search, status: filter }).then((rows) => {
-      setStudents(rows);
+    listContributions().then((rows) => {
+      setContributions(rows);
+      setSelectedId(rows[0]?.id ?? null);
       setLoading(false);
     });
-  }, [search, filter]);
-
-  // Fetched once (independent of search/filter) so the tiles don't bounce
-  // around as the table above them is narrowed down.
-  const [stats, setStats] = useState(null);
-  useEffect(() => {
-    getAnalyticsSummary().then(setStats);
   }, []);
+
+  async function loadRows(id) {
+    setRowsLoading(true);
+    const [s, r] = await Promise.all([getContributionSummary(id), getContributionPayments(id)]);
+    setSummary(s);
+    setRows(r);
+    setRowsLoading(false);
+  }
+
+  useEffect(() => {
+    if (selectedId != null) loadRows(selectedId);
+  }, [selectedId]);
+
+  const filtered = useMemo(() => {
+    let out = rows;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      out = out.filter((r) => r.student.toLowerCase().includes(q) || r.matric_number.toLowerCase().includes(q));
+    }
+    if (filter === "success") out = out.filter((r) => r.status === "success");
+    if (filter === "unpaid") out = out.filter((r) => r.status !== "success");
+    return out;
+  }, [rows, search, filter]);
+
+  if (loading) return <AppShell><p>Loading…</p></AppShell>;
+
+  const selected = contributions.find((c) => c.id === selectedId);
 
   return (
     <AppShell>
       <div className="topline" style={{ marginBottom: 4 }}>
         <h1>Admin Dashboard</h1>
-        <span className="chip chip-outline">Session {CURRENT_SESSION}</span>
       </div>
-      <p style={{ color: "var(--muted)" }}>Departmental dues status for every student this session.</p>
+      <p style={{ color: "var(--muted)" }}>Pick a contribution to see who's paid and who hasn't.</p>
 
-      <div className="tiles">
-        <div className="tile">
-          <div className="label">Total students</div>
-          <div className="value">{stats ? stats.total_students : "—"}</div>
-        </div>
-        <div className="tile">
-          <div className="label">Paid</div>
-          <div className="value paid">{stats ? stats.paid : "—"}</div>
-        </div>
-        <div className="tile">
-          <div className="label">Unpaid</div>
-          <div className="value pending">{stats ? stats.unpaid : "—"}</div>
-        </div>
-        <div className="tile">
-          <div className="label">Total collected</div>
-          <div className="value paid">{stats ? `₦${stats.total_collected.toLocaleString()}` : "—"}</div>
-        </div>
+      <div className="field" style={{ maxWidth: 420, marginBottom: 20 }}>
+        <label>Contribution</label>
+        <select value={selectedId ?? ""} onChange={(e) => setSelectedId(Number(e.target.value))}>
+          {contributions.map((c) => (
+            <option key={c.id} value={c.id}>{c.title}</option>
+          ))}
+        </select>
       </div>
+
+      {selected && summary && (
+        <div className="tiles">
+          <div className="tile">
+            <div className="label">Total expected</div>
+            <div className="value">₦{Number(summary.total_expected).toLocaleString()}</div>
+          </div>
+          <div className="tile">
+            <div className="label">Total collected</div>
+            <div className="value paid">₦{Number(summary.total_collected).toLocaleString()}</div>
+          </div>
+          <div className="tile">
+            <div className="label">Outstanding</div>
+            <div className="value pending">{summary.outstanding_count}</div>
+          </div>
+        </div>
+      )}
+
+      {selectedId != null && <OfflineForm contributionId={selectedId} onRecorded={() => loadRows(selectedId)} />}
 
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
         <input
@@ -81,9 +154,9 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {loading ? (
+      {rowsLoading ? (
         <p>Loading…</p>
-      ) : students.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="ledger-card">
           <div className="empty-state">
             <h3>No matches</h3>
@@ -101,17 +174,15 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {students.map((s) => (
+              {filtered.map((r) => (
                 <tr
-                  key={s.id}
+                  key={r.matric_number}
                   style={{ cursor: "pointer" }}
-                  onClick={() => navigate(`/admin/students/${s.id}`)}
+                  onClick={() => navigate(`/admin/students/${encodeURIComponent(r.matric_number)}?contribution=${selectedId}`)}
                 >
-                  <td>{s.full_name}</td>
-                  <td className="ref-code">{s.matric_no}</td>
-                  <td>
-                    <StatusBadge status={s.current_status === "paid" ? "verified" : "unpaid"} />
-                  </td>
+                  <td>{r.student}</td>
+                  <td className="ref-code">{r.matric_number}</td>
+                  <td><StatusBadge status={r.status} /></td>
                 </tr>
               ))}
             </tbody>

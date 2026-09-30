@@ -1,6 +1,8 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { MOCK_MODE } from "../api/client";
+import UnverifiedPaymentsBanner from "./UnverifiedPaymentsBanner";
+import NotificationBell from "./NotificationBell";
 
 const studentLinks = [
   { to: "/dashboard", label: "Dashboard" },
@@ -8,20 +10,27 @@ const studentLinks = [
   { to: "/history", label: "Payment history" },
 ];
 
-const adminLinks = [
+const manageLinks = [
   { to: "/admin", label: "Dashboard" },
   { to: "/admin/contributions", label: "Contributions" },
-  { to: "/admin/verify", label: "Verify payments" },
   { to: "/admin/analytics", label: "Analytics" },
+  { to: "/admin/roster", label: "Import roster" },
+];
+
+// The refund review page and role management are admin-only, so they're
+// only in the nav for admins — class reps don't see them.
+const adminOnlyLinks = [
+  { to: "/admin/verify", label: "Payments needing review" },
+  { to: "/admin/roles", label: "Manage roles" },
 ];
 
 export default function AppShell({ children }) {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, canManage, displayName } = useAuth();
   const navigate = useNavigate();
-  const links = isAdmin ? adminLinks : studentLinks;
+  const links = canManage ? [...manageLinks, ...(isAdmin ? adminOnlyLinks : [])] : studentLinks;
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate("/login");
   }
 
@@ -42,6 +51,9 @@ export default function AppShell({ children }) {
             {link.label}
           </NavLink>
         ))}
+        <NavLink to="/profile" className={({ isActive }) => (isActive ? "active" : "")}>
+          Profile
+        </NavLink>
         <div className="spacer" />
         <button className="nav-item" onClick={handleLogout}>
           Log out
@@ -49,14 +61,15 @@ export default function AppShell({ children }) {
       </aside>
       <main className="main-area">
         <div className="topline">
-          <div />
+          <NotificationBell />
           <div className="who">
-            <div className="name">{user?.full_name}</div>
+            <div className="name">{displayName}</div>
             <div className="role">
-              {isAdmin ? "Administrator" : `${user?.matric_no} · ${user?.level} level`}
+              {isAdmin ? "Administrator" : canManage ? "Class rep" : `${user?.matric_number} · ${user?.level} level`}
             </div>
           </div>
         </div>
+        {canManage && <UnverifiedPaymentsBanner />}
         {children}
       </main>
       {MOCK_MODE && <div className="mock-flag">Running on mock data — backend not connected</div>}

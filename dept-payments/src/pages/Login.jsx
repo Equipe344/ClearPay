@@ -1,6 +1,8 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { listDepartments } from "../api/auth";
+import { getErrorMessage } from "../api/client";
 
 function ReceiptIllustration() {
   return (
@@ -41,23 +43,49 @@ function ReceiptIllustration() {
   );
 }
 
+// Backend rule: letters, digits and @ . + - _ only — no "/" and no "@" beyond
+// the one email allows. Matric numbers contain "/", so prefill by swapping
+// it for "-" and let the student edit from there.
+function usernameFromMatric(matric) {
+  return matric.replace(/\//g, "-");
+}
+
 export default function Login() {
   const [mode, setMode] = useState("login");
+  const [departments, setDepartments] = useState([]);
   const [form, setForm] = useState({
     identifier: "",
     password: "",
-    full_name: "",
-    matric_no: "",
+    username: "",
+    usernameTouched: false,
+    matric_number: "",
     email: "",
+    department_id: "",
     level: "100",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registered, setRegistered] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const { login, register } = useAuth();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    listDepartments().then((rows) => {
+      setDepartments(rows);
+      setForm((f) => (f.department_id ? f : { ...f, department_id: rows[0]?.id ?? "" }));
+    });
+  }, []);
+
   function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
+    setForm((f) => {
+      const next = { ...f, [field]: value };
+      if (field === "matric_number" && !f.usernameTouched) {
+        next.username = usernameFromMatric(value);
+      }
+      if (field === "username") next.usernameTouched = true;
+      return next;
+    });
   }
 
   async function handleSubmit(e) {
@@ -67,19 +95,22 @@ export default function Login() {
     try {
       if (mode === "login") {
         const user = await login(form.identifier, form.password);
-        navigate(user.role === "admin" ? "/admin" : "/dashboard");
+        navigate(user.role === "admin" || user.role === "class_rep" ? "/admin" : "/dashboard");
       } else {
-        const user = await register({
-          full_name: form.full_name,
-          matric_no: form.matric_no,
+        await register({
+          username: form.username,
           email: form.email,
-          level: form.level,
           password: form.password,
+          matric_number: form.matric_number,
+          department_id: Number(form.department_id),
+          level: form.level,
         });
-        navigate(user.role === "admin" ? "/admin" : "/dashboard");
+        setRegistered(true);
+        setMode("login");
+        setForm((f) => ({ ...f, identifier: form.username, password: "" }));
       }
     } catch (err) {
-      setError(err.response?.data?.detail || err.message || "Something went wrong.");
+      setError(getErrorMessage(err) || err.message || "Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -149,30 +180,54 @@ export default function Login() {
               </button>
             </div>
 
+            {registered && mode === "login" && (
+              <div className="banner success">Account created — log in to continue.</div>
+            )}
             {error && <div className="banner error">{error}</div>}
 
-            {mode === "register" && (
+            {mode === "login" && (
               <div className="field">
-                <label>Full name</label>
-                <input required value={form.full_name} onChange={(e) => update("full_name", e.target.value)} />
+                <label>Matric number, email or username</label>
+                <input
+                  required
+                  value={form.identifier}
+                  onChange={(e) => update("identifier", e.target.value)}
+                  placeholder="CSC/2026/041"
+                />
               </div>
             )}
-
-            <div className="field">
-              <label>{mode === "login" ? "Matric number or email" : "Matric number"}</label>
-              <input
-                required
-                value={mode === "login" ? form.identifier : form.matric_no}
-                onChange={(e) => update(mode === "login" ? "identifier" : "matric_no", e.target.value)}
-                placeholder="CSC/2026/041"
-              />
-            </div>
 
             {mode === "register" && (
               <>
                 <div className="field">
-                  <label>Student Email</label>
+                  <label>Matric number</label>
+                  <input
+                    required
+                    value={form.matric_number}
+                    onChange={(e) => update("matric_number", e.target.value)}
+                    placeholder="CSC/2026/041"
+                  />
+                </div>
+                <div className="field">
+                  <label>Username</label>
+                  <input
+                    required
+                    value={form.username}
+                    onChange={(e) => update("username", e.target.value)}
+                    placeholder="Letters, digits, and @ . + - _ only"
+                  />
+                </div>
+                <div className="field">
+                  <label>Email</label>
                   <input required type="email" value={form.email} onChange={(e) => update("email", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Department</label>
+                  <select value={form.department_id} onChange={(e) => update("department_id", e.target.value)}>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="field">
                   <label>Level</label>
@@ -187,19 +242,51 @@ export default function Login() {
 
             <div className="field">
               <label>Password</label>
-              <input
-                required
-                type="password"
-                value={form.password}
-                onChange={(e) => update("password", e.target.value)}
-              />
+              <div style={{ position: "relative" }}>
+                <input
+                  required
+                  minLength={8}
+                  type={showPassword ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => update("password", e.target.value)}
+                  style={{ paddingRight: 40 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                  style={{
+                    position: "absolute",
+                    right: 4,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "1rem",
+                    padding: "6px 8px",
+                    lineHeight: 1,
+                  }}
+                >
+                  {showPassword ? "🙈" : "👁️"}
+                </button>
+              </div>
+              {mode === "register" && (
+                <div className="hint">At least 8 characters. Not all digits, not too common.</div>
+              )}
             </div>
 
             <button className="btn btn-block" type="submit" disabled={loading}>
               {loading ? "Please wait…" : mode === "login" ? "Log in →" : "Create account →"}
             </button>
 
-            
+            {mode === "login" && (
+              <p className="sub" style={{ marginTop: 16, display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <Link to="/forgot-password">Forgot password?</Link>
+                <Link to="/claim">Claim a roster account</Link>
+              </p>
+            )}
           </form>
         </div>
       </div>

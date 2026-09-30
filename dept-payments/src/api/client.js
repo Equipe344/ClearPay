@@ -1,16 +1,17 @@
 import axios from "axios";
 
 /**
- * Backend contract: Django REST Framework, JWT auth (e.g. simplejwt).
+ * Backend contract: Django REST Framework, Token auth (rest_framework.authtoken).
  *
  * Set VITE_API_BASE_URL in a .env file once the backend is live, e.g.:
- *   VITE_API_BASE_URL=https://api.yourdept.edu/api
+ *   VITE_API_BASE_URL=https://<render-app>/api
  *
  * Until that variable is set, the app runs fully on mock data (see
  * src/mock/data.js) so the UI/UX can be reviewed and demoed without
- * the backend existing yet. Every function in src/api/*.js is written
- * against the endpoint shape the Django team should implement, so
- * switching MOCK_MODE off is a drop-in swap, not a rewrite.
+ * the backend existing yet.
+ *
+ * Source of truth for every endpoint: docs/API_CONTRACT.md on the backend
+ * branch — don't keep a separate copy of it here.
  */
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 export const MOCK_MODE = !API_BASE_URL;
@@ -20,59 +21,36 @@ export const apiClient = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach access token to every request
+// Attach the auth token to every request. Tokens don't expire and there's
+// no refresh endpoint, so this is the only auth interceptor needed.
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("access_token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  const token = localStorage.getItem("token");
+  if (token) config.headers.Authorization = `Token ${token}`;
   return config;
 });
 
-// Refresh access token on 401, matching djangorestframework-simplejwt's
-// POST /api/auth/token/refresh/ { refresh } -> { access }
-let isRefreshing = false;
-let queue = [];
-
+// On any 401, the token is no longer valid — clear it and send the user
+// back to login. There is no refresh flow to attempt first.
 apiClient.interceptors.response.use(
   (res) => res,
-  async (error) => {
-    const original = error.config;
-    if (error.response?.status === 401 && !original._retry && !MOCK_MODE) {
-      const refresh = localStorage.getItem("refresh_token");
-      if (!refresh) {
-        localStorage.removeItem("access_token");
-        window.location.href = "/login";
-        return Promise.reject(error);
-      }
-      original._retry = true;
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          queue.push({ resolve, reject, original });
-        });
-      }
-      isRefreshing = true;
-      try {
-        const { data } = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
-          refresh,
-        });
-        localStorage.setItem("access_token", data.access);
-        queue.forEach(({ resolve, original: o }) => {
-          o.headers.Authorization = `Bearer ${data.access}`;
-          resolve(apiClient(o));
-        });
-        queue = [];
-        original.headers.Authorization = `Bearer ${data.access}`;
-        return apiClient(original);
-      } catch (refreshErr) {
-        localStorage.clear();
-        window.location.href = "/login";
-        return Promise.reject(refreshErr);
-      } finally {
-        isRefreshing = false;
-      }
+  (error) => {
+    if (error.response?.status === 401 && !MOCK_MODE) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.assign("/login");
     }
     return Promise.reject(error);
   }
 );
+
+// Every error from the backend is shaped { error: "code", message: "text" }.
+// Always read .message, never .detail.
+export const getErrorMessage = (err) =>
+  err.response?.data?.message || "Something went wrong. Please try again.";
+
+// The specific error `code` string, when the caller needs to branch on it
+// (e.g. "already_paid", "email_required") rather than just show the message.
+export const getErrorCode = (err) => err.response?.data?.error;
 
 // Small helper so mock functions can simulate network latency without
 // littering every mock file with setTimeout boilerplate.

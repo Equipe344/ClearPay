@@ -510,20 +510,43 @@ table.data tr:last-child td { border-bottom: none; }
   .auth-side { display: none; }
   .auth-topbar { padding: 16px 20px; }
 }
-
 @media (max-width: 780px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar {
     flex-direction: row;
-    overflow-x: auto;
-    padding: 12px;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding: 10px 12px;
     gap: 6px;
   }
   .sidebar .brand { display: none; }
   .sidebar .spacer { display: none; }
-  .sidebar a, .sidebar .nav-item { white-space: nowrap; font-size: 0.82rem; padding: 8px 10px; }
+  .sidebar a, .sidebar .nav-item {
+    white-space: nowrap;
+    font-size: 0.8rem;
+    padding: 8px 10px;
+    flex: 0 0 auto;
+  }
   .main-area { padding: 20px 16px 50px; }
   .topline { flex-direction: column; }
   .topline .who { text-align: left; }
   table.data { display: block; overflow-x: auto; white-space: nowrap; }
+
+  .stub-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .stub-row > div[style*="flex: 1"] {
+    order: 2;
+  }
+  .stub-row > div[style*="display: flex"] {
+    order: 3;
+    justify-content: flex-start;
+  }
+  .stub-row button.btn,
+  .stub-row button.btn-ghost {
+    flex: 1;
+  }
 }

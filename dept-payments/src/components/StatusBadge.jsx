@@ -1,17 +1,17 @@
+// Real backend statuses are only success | pending | failed — there is no
+// "verified" or "rejected". "unpaid" is a frontend-only label for a
+// contribution or roster row with no payment at all yet (has_paid: false).
 const LABELS = {
-  verified: "Paid",
-  pending: "Pending review",
-  rejected: "Rejected",
+  success: "Paid",
+  pending: "Processing",
+  failed: "Failed",
   unpaid: "Unpaid",
 };
 
-// "unpaid" (never submitted) is visually distinct from "rejected" (submitted
-// then declined) but both read as "not yet resolved," so they share the
-// amber/pending badge color while keeping their own label.
 const CLASS_MAP = {
-  verified: "paid",
+  success: "paid",
   pending: "pending",
-  rejected: "rejected",
+  failed: "rejected",
   unpaid: "pending",
 };
 

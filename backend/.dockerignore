@@ -1,0 +1,22 @@
+# Keep the image small and secret-free. Anything listed here is NOT copied in.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets and local state — never ship these in an image.
+.env
+db.sqlite3
+db.sqlite3-journal
+backups/
+
+# Generated at container start, not baked in.
+staticfiles/
+media/
+.backend-doctor/
+
+# Editor / VCS noise.
+.git/
+.gitignore
+.vscode/
+*.log

@@ -453,6 +453,15 @@ at `https://<your-domain>/api/payments/webhook/` — the webhook is the
 cold-start in ~50s. Ping `/api/health/` (or run a Starter plan) before the
 judges' demo so the wake-up doesn't eat your slot.
 
+### Alternative: Docker
+
+Prefer containers? `backend/Dockerfile` + root `docker-compose.yml` build the
+same service (Gunicorn on port 8000, migrations + `collectstatic` at startup).
+Run locally with `docker compose up --build`, or hand the image to any
+Docker-capable host. Full walkthrough (Render, Docker, Vercel) and the env-var
+table: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Render stays the recommended
+default — the Docker path is purely optional.
+
 ---
 
 ## Known open items / roadmap

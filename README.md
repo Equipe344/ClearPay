@@ -1,36 +1,63 @@
-# Departmental Payment/Contribution System — Backend
+# Departmental Payment/Contribution System
 
 **Team Visionary Coders** — NACOS National Build Challenge
-**Branch:** `backend-dev` · **Status:** all build modules complete · **266/266 tests passing**
+**Status:** all modules complete · **271 backend tests passing** · frontend builds clean
 
-Django + DRF backend that lets departments create contributions (dues, event
-fees, shirts, excursions) and students pay through Paystack with automatic
-verification — replacing manual "send screenshot as proof" tracking.
+A full-stack solution: a **Django + DRF API** (`backend/`) and a **React + Vite
+app** (`frontend/`). Departments create contributions (dues, event fees, shirts,
+excursions) and students pay through Paystack with automatic verification —
+replacing manual "send screenshot as proof" tracking.
 
 It also solves the tracking problem *before* anyone pays: admins import the
 department's class list, so the system knows exactly **who owes what**, who has
 paid, and who has not — instead of only counting students who happened to
 register.
 
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `backend/` | Django + DRF API — models, permissions, tests, `Dockerfile`, `simulate_webhook.py` |
+| `frontend/` | React + Vite single-page app (student, rep and admin screens) |
+| `docs/` | API contract, frontend-linking guide, deployment, security & test reports |
+| `render.yaml` | One-click Render Blueprint: backend web service + managed PostgreSQL |
+| `docker-compose.yml` | Optional local backend + PostgreSQL in containers |
+
+## Live demo
+
+| Item | Link |
+|---|---|
+| Frontend (Vercel) | _add before the demo_ |
+| Backend health | _`https://<service>.onrender.com/api/health/`_ |
+| Demo video | _add link_ |
+
+**Demo walkthrough** (full checklist: [`docs/MANUAL_TESTING_GUIDE.md`](docs/MANUAL_TESTING_GUIDE.md)):
+1. **Admin** → import the class roster (CSV) → create a contribution/fee.
+2. **Student** → claim their roster account (or register) → pay a fee online via Paystack → submit an offline proof for a second fee.
+3. **Class rep** → approve the offline proof → the student flips to **paid**.
+4. Show **analytics** (collected vs outstanding) and the **notifications** feed.
+
 ---
 
 ## Contents
-1. [Tech stack](#tech-stack)
-2. [Setup (any teammate can run this)](#setup-any-teammate-can-run-this)
-3. [How the system works — feature tour](#how-the-system-works--feature-tour)
-4. [Architecture & how it was built](#architecture--how-it-was-built)
-5. [Full API reference](#full-api-reference)
-6. [The payment lifecycle (most important section)](#the-payment-lifecycle-most-important-section)
-7. [Auth, roles & security rules](#auth-roles--security-rules)
-8. [Roster import & account claiming](#roster-import--account-claiming)
-9. [Password reset (assisted, no email)](#password-reset-assisted-no-email)
-10. [Rep promotion](#rep-promotion)
-11. [Notifications](#notifications)
-12. [Analytics handover (Data/AI teammate)](#analytics-handover-dataai-teammate)
-13. [Testing](#testing)
-14. [Deployment](#deployment)
-15. [Known open items / roadmap](#known-open-items--roadmap)
-16. [Notes for teammates](#notes-for-teammates)
+1. [Repository layout](#repository-layout)
+2. [Live demo](#live-demo)
+3. [Tech stack](#tech-stack)
+4. [Setup (any teammate can run this)](#setup-any-teammate-can-run-this)
+5. [How the system works — feature tour](#how-the-system-works--feature-tour)
+6. [Architecture & how it was built](#architecture--how-it-was-built)
+7. [Full API reference](#full-api-reference)
+8. [The payment lifecycle (most important section)](#the-payment-lifecycle-most-important-section)
+9. [Auth, roles & security rules](#auth-roles--security-rules)
+10. [Roster import & account claiming](#roster-import--account-claiming)
+11. [Password reset (assisted, no email)](#password-reset-assisted-no-email)
+12. [Rep promotion](#rep-promotion)
+13. [Notifications](#notifications)
+14. [Analytics handover (Data/AI teammate)](#analytics-handover-dataai-teammate)
+15. [Testing](#testing)
+16. [Deployment](#deployment)
+17. [Known open items / roadmap](#known-open-items--roadmap)
+18. [Notes for teammates](#notes-for-teammates)
 
 ---
 
@@ -70,6 +97,18 @@ Admin panel: `http://localhost:8000/admin/`
 | `BMONI_BASE_URL` | Defaults to the BMONI **sandbox**; set the production host explicitly |
 | `BMONI_WEBHOOK_SECRET` | BMONI's webhook signing secret. Unset makes the webhook fail closed (`503`) — an unsigned delivery is never trusted |
 | `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` | Needed once deployed |
+
+### Frontend
+
+```bash
+cd Departmental-Payment-Tracking/frontend
+npm install
+copy .env.example .env               # mac/linux: cp .env.example .env
+npm run dev                          # http://localhost:5173
+```
+
+Set `VITE_API_BASE_URL=http://127.0.0.1:8000/api` in `frontend/.env` — without it
+the app stays in mock mode. Production build: `npm run build` → `dist/`.
 
 ## How the system works — feature tour
 
@@ -428,7 +467,7 @@ Two resources exist so you can prove the whole system works end to end:
 
 ---
 
-## Deployment (Render)
+## Deployment (backend on Render, frontend on Vercel)
 
 The repo ships **`render.yaml`** — a one-click blueprint. In Render: *New + →
 Blueprint*, pick this repo, fill the two prompted values (`PAYSTACK_SECRET_KEY`,
@@ -462,6 +501,13 @@ Docker-capable host. Full walkthrough (Render, Docker, Vercel) and the env-var
 table: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Render stays the recommended
 default — the Docker path is purely optional.
 
+### Frontend (Vercel)
+
+Deploy the `frontend/` folder as a static site (build `npm run build`, output
+`dist/`), setting `VITE_API_BASE_URL=https://<your-backend>.onrender.com/api`.
+Then add that Vercel origin to the backend's `CORS_ALLOWED_ORIGINS` and redeploy
+the backend. Full steps: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ---
 
 ## Known open items / roadmap
@@ -494,6 +540,8 @@ default — the Docker path is purely optional.
 ## Project layout
 - `backend/core/` — settings, URL config, exception handler
 - `backend/apps/` — one Django app per concern (users, contributions, payments, notifications, analytics)
-- `docs/` — API contract, DB structure, security audit report
+- `frontend/src/` — React pages, components, API client and auth context
+- `docs/` — API contract, DB structure, deployment guide, security audit reports
+- `render.yaml` / `docker-compose.yml` — deployment (Render Blueprint / optional Docker)
 
 **written by** `alabiemmanuel`

@@ -1,6 +1,6 @@
 # Backend API Contract — Departmental Payment/Contribution System
 Team Visionary Coders — NACOS National Build Challenge
-**v2.3 — Phase 4: department NGN bank accounts via BMONI (section 4a) · 261 tests passing**
+**v2.4 — offline proof review (§3b) + admin user lookup (`GET /auth/users/`) · 271 tests passing**
 
 This is what the backend exposes. Frontend builds against these endpoints;
 whoever's on the Payment Gateway side needs the `/payments/` section especially.
@@ -25,6 +25,7 @@ Base URL (local dev): `http://localhost:8000/api/`
 | POST | `/auth/reset-code/` | **NEW** — Rep/admin: issue a one-time password-reset code |
 | POST | `/auth/reset-password/` | **NEW** — Student sets a new password with that code |
 | POST | `/auth/users/{id}/set-role/` | **NEW** — Admin: promote a student to class rep |
+| GET | `/auth/users/?search=` | **NEW** — Admin: find a user by matric/username/name (lookup for set-role) |
 
 **POST /auth/register/**
 ```json
@@ -181,6 +182,16 @@ mark-paid-offline power, so it can never happen through self-service. This endpo
 only ever set `student`/`class_rep` (never `admin`), and an admin cannot change their own
 role.
 
+**GET /auth/users/?search=csc/2021/045** (admin only) — find a user by matric number
+(`matric_number=` also accepted), username, or name. Resolves the numeric id the
+`set-role` route needs. Capped at 20, non-sensitive fields only.
+```json
+// Response  200
+[ { "id": 12, "username": "CSC/2021/045", "full_name": "John Doe",
+    "matric_number": "CSC/2021/045", "role": "student",
+    "department": "Computer Science" } ]
+```
+
 ---
 
 ## 2. Departments
@@ -293,6 +304,45 @@ a price.
   "paid_at": "2026-09-10T12:00:00Z", "method": "manual" }
 ```
 
+### Self-reported offline payments with proof — reviewed, not trusted (§3b)
+
+The rep-entered route above covers cash the rep collected. For money the rep
+never saw (a bank transfer or POS receipt, or cash the student handed someone
+else), the **student** claims the payment and uploads a screenshot; a rep/admin
+reviews it. Two routes, one ledger — the credited row passes the same §8
+settlement guard in both cases.
+
+**POST /payments/submit/** — student, multipart (`contribution_id`, `channel`
+one of `bank_transfer` / `pos` / `cash`, optional `note`, optional `proof`
+file). Amount is always the contribution's, set server-side. One live
+self-report per student+fee: re-submitting replaces the previous `pending` row.
+```json
+// Response  201
+{ "message": "Submitted for review.",
+  "payment": { "reference": "SELF-5-12-9f3a2c", "status": "pending",
+               "method": "manual", "channel": "bank_transfer",
+               "proof_url": "http://127.0.0.1:8000/media/proofs/2026/10/proof.png", ... } }
+```
+
+**GET /payments/pending/** (rep/admin) — the review queue. A rep sees only their
+own department's submissions.
+```json
+// Response  200
+{ "count": 1, "results": [
+  { "id": 7, "reference": "SELF-5-12-9f3a2c", "student_name": "John Doe",
+    "student_matric": "CSC/2021/045", "contribution_title": "Departmental Shirt 2026",
+    "amount": "3500.00", "channel": "bank_transfer", "note": "paid at the bank",
+    "proof_url": "…", "status": "pending", "created_at": "…" } ] }
+```
+
+**POST /payments/{id}/review/** (rep/admin) — `{ "action": "approve" | "reject",
+"note"?: "" }`. Approving credits the payment (and notifies the student);
+rejecting marks it `failed`.
+```json
+// Response  200
+{ "message": "Payment reviewed.", "payment": { "status": "success", ... } }
+```
+
 **`receipt_reference` is required** (teller slip / receipt-book / transfer reference).
 It is the audit hook that makes an offline mark reconcilable: the Payment row stores both
 `receipt_reference` and `recorded_by` (who marked it), so a rep's marks can always be
@@ -322,6 +372,9 @@ Guards, all returning `400`/`403`/`409` before any write:
 | GET | `/payments/departments/{id}/bank-account/` | **NEW** — the department's own NGN account, to pay by bank transfer (section 4a) |
 | POST | `/payments/departments/{id}/bank-account/` | **NEW** — rep/admin: create that account through BMONI (idempotent) |
 | POST | `/payments/bmoni/webhook/` | **NEW** — BMONI calls this automatically — no user, no auth token |
+| POST | `/payments/submit/` | Student submits an offline (bank transfer / POS / cash) payment with proof → `pending` (§3b) |
+| GET | `/payments/pending/` | Rep/admin queue of self-reported offline payments awaiting review (§3b) |
+| POST | `/payments/{id}/review/` | Rep/admin approves or rejects a self-reported payment — `action: approve \| reject` (§3b) |
 
 **POST /payments/initiate/**
 ```json
@@ -654,3 +707,19 @@ These apply to every endpoint above. Backend must enforce them; QA must test the
 - The BVN is never stored, never logged, and masked out of any upstream message that echoes it back; only its last four digits are kept.
 
 **Registration hardening (section 1):** passwords are validated with Django's built-in validators (min 8 chars, common-password and all-numeric checks). Duplicate `username`, `email`, or `matric_number` attempts return one **generic** error (no account enumeration), with case-insensitive identifier checks; usernames cannot contain `@`. Privileged account fields are ignored on registration and profile updates. Login and register are rate-limited server-side at 10/min per IP — clients must handle `429` using the standard error shape.
+
+**Offline settlement (§3b):** the credited row passes the *same* rules regardless of
+origin, whether a student's gateway charge, a rep-entered offline mark, or an
+*approved* self-reported proof:
+- **Amount check:** only the exact agreed fee is ever credited; the amount always
+  comes from the contribution, never the client. A gateway mismatch fails the
+  charge into the refund review queue instead.
+- **One credit per student+fee:** the `unique_success_per_student_fee` partial
+  constraint backs this; a lost race (or an approval racing a charge) fails the
+  late row into review rather than double-crediting.
+- **Reviewed, never self-credited:** a `POST /payments/submit/` row is always
+  born `pending`; it becomes `success` only through the rep/admin
+  `POST /payments/{id}/review/` decision (stored with it in
+  `recorded_by`), or rejects cleanly without touching the ledger.
+- **Notifications:** the student is told about every decision that touches their
+  money (gateway success/failure, rep-entered manual marks, approved proofs).

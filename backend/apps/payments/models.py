@@ -136,6 +136,26 @@ class Payment(models.Model):
         db_index=True,
     )
 
+    # --- Offline self-report (bank transfer / POS / cash) ------------------
+    # A student who paid outside the gateway uploads a screenshot as proof.
+    # The row is created `pending` and only credited after a rep/admin review
+    # (see SubmitOfflinePaymentView / ReviewPaymentView). `channel` records how
+    # they claim to have paid; `proof` is the screenshot/photo; `note` is the
+    # optional message they attach. All three are empty for gateway payments.
+    CHANNEL_BANK_TRANSFER = 'bank_transfer'
+    CHANNEL_POS = 'pos'
+    CHANNEL_CASH = 'cash'
+
+    CHANNEL_CHOICES = [
+        (CHANNEL_BANK_TRANSFER, 'Bank Transfer'),
+        (CHANNEL_POS, 'POS'),
+        (CHANNEL_CASH, 'Cash'),
+    ]
+
+    channel = models.CharField(max_length=20, blank=True, default='')
+    note = models.CharField(max_length=255, blank=True, default='')
+    proof = models.FileField(upload_to='proofs/%Y/%m/', null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -2,6 +2,7 @@ import csv
 import io
 
 from django.contrib.auth.password_validation import validate_password
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework import status, generics
@@ -491,3 +492,44 @@ class SetUserRoleView(APIView):
         return Response(
             {'user': {'id': user.id, 'username': user.username, 'role': user.role}}
         )
+
+
+class UserListView(APIView):
+    """
+    GET /api/auth/users/?search=<matric|username|name> — admin-only lookup.
+
+    Used by the role-management screen to resolve a matric number (or a name)
+    to a user id before calling set-role. Returns only safe, non-sensitive
+    fields and is capped so a broad search can't dump the whole user table.
+    """
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        query = (
+            request.query_params.get('search')
+            or request.query_params.get('matric_number')
+            or ''
+        ).strip()
+        qs = User.objects.all()
+        if query:
+            qs = qs.filter(
+                Q(matric_number__iexact=query)
+                | Q(username__iexact=query)
+                | Q(matric_number__icontains=query)
+                | Q(username__icontains=query)
+                | Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+            )
+        qs = qs.select_related('department').order_by('id')[:20]
+        return Response([
+            {
+                'id': user.id,
+                'username': user.username,
+                'full_name': user.get_full_name() or user.username,
+                'matric_number': user.matric_number,
+                'role': user.role,
+                'department': user.department.name if user.department_id else None,
+            }
+            for user in qs
+        ])

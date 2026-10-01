@@ -530,7 +530,8 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             {
                 'id', 'student', 'contribution', 'payment_type', 'amount',
                 'paid_amount', 'reference', 'status', 'refund_status',
-                'method', 'created_at', 'updated_at', 'verified_at',
+                'method', 'channel', 'note', 'proof_url',
+                'created_at', 'updated_at', 'verified_at',
             },
         )
 

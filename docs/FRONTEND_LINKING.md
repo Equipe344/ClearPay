@@ -32,6 +32,7 @@ this table, ASK before building a new endpoint — do not invent routes.
 | POST | /auth/reset-code/ | Yes (rep/admin) | {matric_number} | 200 {code,…} | Rep assists a locked-out student |
 | POST | /auth/reset-password/ | No | {matric_number,code,password} | 200 {message} | Student sets a new password |
 | POST | /auth/users/{id}/set-role/ | Yes (admin) | {role} | 200 {…} | Admin: promote a class rep |
+| GET | /auth/users/?search= | Yes (admin) | params: search | 200 [user] | Admin: find a user (to resolve the id for set-role) |
 
 Rate limits: login, register, claim and reset are throttled at 10/min per IP. On
 `429` show the returned `message` and stop retrying — don't hammer.
@@ -105,7 +106,10 @@ Students never receive closed fees; reps render them greyed-out using `is_closed
 | GET | /payments/history/ | Yes | — | 200 [...] | "My payments" page |
 | GET | /payments/verify/{reference}/ | Yes | — | 200 {message,payment} | Manual "refresh status" after the Paystack redirect |
 | GET | /payments/{id}/receipt/ | Yes | — | 200 payment | Receipt modal |
-| GET | /payments/unverified/ | Yes (admin) | — | 200 [...] | Admin refund-review queue |
+| GET | /payments/unverified/ | Yes (admin) | — | 200 [...] | Admin refund-review queue (read-only; refund decisions live in the Django admin) |
+| POST | /payments/submit/ | Yes | multipart: `contribution_id`, `channel` (`bank_transfer`/`pos`/`cash`), `note?`, `proof?` | 201 {message,payment} with `status:"pending"` | Student "already paid by transfer/POS/cash" + proof upload |
+| GET | /payments/pending/ | Yes (rep/admin) | — | 200 {count,results:[…]} (rep: own department only) | Verify-payments queue (approve/reject) |
+| POST | /payments/{id}/review/ | Yes (rep/admin) | {action:`approve`\|`reject`,note?} | 200 {message,payment} | Approve/reject a self-reported payment |
 | POST | /payments/webhook/ | No (gateway) | signed payload | 200 {received:true} | n/a — server-to-server, never called by the frontend |
 | GET | /payments/departments/{id}/bank-account/ | Yes | — | 200 {provisioned,department,bank_account,status} | **"Pay by transfer" card**: show the account only when `provisioned:true` |
 | POST | /payments/departments/{id}/bank-account/ | Yes (rep/admin) | {first_name,last_name,email,phone_number,bvn} | 201 (200 if it already existed) | Rep's "set up a department account" action |
@@ -185,7 +189,7 @@ Domain-specific codes you may want to branch on (same shape, same status rules):
 
 | Status | `error` | Where | What to do |
 |---|---|---|---|
-| 409 | `already_paid` | /payments/initiate/, POST /contributions/{id}/payments/ | Fee already settled — refresh instead of paying |
+| 409 | `already_paid` | /payments/initiate/, POST /contributions/{id}/payments/, POST /payments/submit/, POST /payments/{id}/review/ | Fee already settled — refresh instead of paying |
 | 400 | `claim_failed` | /auth/claim/ | One generic message — the API deliberately won't say which detail was wrong |
 | 400 | `weak_password` | /auth/claim/, /auth/reset-password/ | Show the password rules from `message` |
 | 400 | `invalid_code` / `code_expired` | /auth/reset-password/ | Codes are one-time — ask the rep for a fresh one |
@@ -202,6 +206,7 @@ Domain-specific codes you may want to branch on (same shape, same status rules):
 | Screen / action | Backend call(s) |
 |---|---|
 | "Pay now" → redirect to Paystack | POST /payments/initiate/ {contribution_id} → take `checkout_url` → redirect; on return, re-GET /contributions/ and rely on `has_paid` |
+| "Already paid by transfer" (offline with proof) | POST /payments/submit/ (multipart) → student banner "submitted for review"; rep/admin approves on Verify-payments via GET /payments/pending/ + POST /payments/{id}/review/ |
 | Student dashboard vs Rep dashboard "same fees list" | Same GET /contributions/; backend already hides/shows by role — just render by `user.role` |
 | Rep "mark someone paid" vs "see roster" | Same route: GET /contributions/{id}/payments/ (list) and POST /contributions/{id}/payments/ (action) |
 | Unread badge | GET /notifications/ → count items where `is_read == false` |
@@ -210,7 +215,12 @@ Domain-specific codes you may want to branch on (same shape, same status rules):
 | Money is a string, but `has_paid` is a boolean | Never string-compare `amount`; compare `paid` state with `has_paid` only |
 
 ## Integration readiness checklist
-Backend side is done; tick these off as the frontend wires up.
+Backend side is done; tick these off as the frontend wires up. All shipped paths are covered by **live HTTP + unit tests** (`docs/TEST_REPORT.md` §Status board).
+
+- [ ] **Backend adds after this sprint:** `POST /payments/submit/`, `GET /payments/pending/`,
+  `POST /payments/{id}/review/` (student proof → rep/admin review — see the Payments section),
+  plus `GET /auth/users/?search=` (admin-only lookup for the role screen).
+- [ ] **Refunds:** decisions happen in the Django admin; the frontend queue is read-only.
 
 - [ ] **Base URL** comes from an env var, e.g. `VITE_API_URL` / `NEXT_PUBLIC_API_URL` — never hardcoded. Local: `http://localhost:8000/api`.
 - [ ] **Token storage** — `POST /auth/login/` returns `token`; send it as `Authorization: Token <token>` (the literal word `Token`, not `Bearer`).

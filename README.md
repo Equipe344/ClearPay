@@ -165,6 +165,7 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `POST` | `/auth/reset-code/` | rep/admin | Issue a one-time student reset code |
 | `POST` | `/auth/reset-password/` | public | Redeem the code and set a new password |
 | `POST` | `/auth/users/{id}/set-role/` | admin | Promote/demote a student ↔ class rep |
+| `GET` | `/auth/users/?search=` | admin | Look up a user by matric/username/name (resolves the id for set-role) |
 
 ### Contributions (`/api/contributions/`)
 | Method | Path | Who | Purpose |
@@ -186,6 +187,9 @@ checklist: [`docs/FRONTEND_LINKING.md`](docs/FRONTEND_LINKING.md).
 | `GET` | `/verify/{reference}/` | student | Re-check the gateway and settle the payment |
 | `GET` | `/{id}/receipt/` | owner | Receipt for one payment |
 | `POST` | `/webhook/` | Paystack | HMAC-signed gateway callback (idempotent) |
+| `POST` | `/submit/` | student | Submit an offline (bank transfer / POS / cash) payment with proof — lands `pending` (§3b) |
+| `GET` | `/pending/` | rep/admin | Queue of self-reported offline payments awaiting review — rep sees own department only (§3b) |
+| `POST` | `/{id}/review/` | rep/admin | Approve (`success`) or reject (`failed`) a self-report — credit uses the same settlement guard (§3b) |
 | `GET` | `/departments/{id}/bank-account/` | department members | **The department's own NGN account** (BMONI) to pay by bank transfer; `provisioned: false` when there isn't one yet |
 | `POST` | `/departments/{id}/bank-account/` | rep/admin | Create that account through BMONI — idempotent, so pressing it twice returns the same account |
 | `POST` | `/bmoni/webhook/` | BMONI | HMAC-SHA256-signed BMONI callback. Deliveries are archived (deduped on BMONI's event id); crediting a deposit is Phase 2 |

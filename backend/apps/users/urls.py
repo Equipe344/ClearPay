@@ -12,6 +12,7 @@ from .views import (
     IssueResetCodeView,
     ResetPasswordView,
     SetUserRoleView,
+    UserListView,
 )
 
 urlpatterns = [
@@ -39,4 +40,7 @@ urlpatterns = [
 
     # Admin-only promotion: reps are normal students until ticked.
     path('auth/users/<int:pk>/set-role/', SetUserRoleView.as_view(), name='auth-set-role'),
+    # Admin-only user lookup for the role-management screen (search by
+    # matric/username/name) — resolves a matric number to a user id.
+    path('auth/users/', UserListView.as_view(), name='auth-users-list'),
 ]

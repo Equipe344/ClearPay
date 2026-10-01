@@ -147,10 +147,9 @@ class ContributionPaymentsView(APIView):
     """
     GET /contributions/{id}/payments/ — class rep/admin only.
 
-    Lists every eligible student's payment status for this contribution.
-    Until the payments app is integrated, the bridge reports no payments, so
-    every eligible student shows status "pending" (the honest state of the
-    data today — no payment rows exist to attribute to this contribution).
+    One row per eligible student: their payment status on this fee. Reads the
+    full Payment ledger (gateway and approved self-reported rows), so the
+    statuses always agree with has_paid and the collection totals.
     """
 
     permission_classes = [IsClassRepOrAdmin]

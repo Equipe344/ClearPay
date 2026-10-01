@@ -200,6 +200,12 @@ STATIC_URL = 'static/'
 # whitenoise. Local runserver keeps serving straight from the apps.
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Uploaded files (offline payment-proof screenshots). Served by Django only when
+# DEBUG=True (see core/urls.py). A production host must put object storage or a
+# static file server in front of MEDIA_ROOT.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

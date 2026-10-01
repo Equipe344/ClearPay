@@ -10,6 +10,7 @@ class PaymentSerializer(serializers.ModelSerializer):
     # possible on legacy rows (contribution FK is nullable).
     contribution = serializers.SerializerMethodField()
     verified_at = serializers.SerializerMethodField()
+    proof_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Payment
@@ -24,6 +25,9 @@ class PaymentSerializer(serializers.ModelSerializer):
             'status',
             'refund_status',
             'method',
+            'channel',
+            'note',
+            'proof_url',
             'created_at',
             'updated_at',
             'verified_at',
@@ -48,6 +52,14 @@ class PaymentSerializer(serializers.ModelSerializer):
 
     def get_verified_at(self, obj):
         return obj.updated_at if obj.status == Payment.STATUS_SUCCESS else None
+
+    def get_proof_url(self, obj):
+        """Absolute URL to the uploaded proof, or None. Local/dev only."""
+        if not obj.proof:
+            return None
+        request = self.context.get('request')
+        url = obj.proof.url
+        return request.build_absolute_uri(url) if request else url
 
     def validate_payment_type(self, value):
         valid_types = [
@@ -167,3 +179,48 @@ class DepartmentBankAccountSerializer(serializers.ModelSerializer):
             'status',
             'provisioned_at',
         ]
+
+
+class PendingPaymentSerializer(serializers.ModelSerializer):
+    """
+    Admin/rep queue for self-reported offline payments awaiting review
+    (GET /api/payments/pending/). Shows who submitted, which fee, how they
+    claim to have paid, and a link to the proof screenshot so a reviewer can
+    approve or reject without opening the database.
+    """
+
+    student_name = serializers.SerializerMethodField()
+    student_matric = serializers.CharField(
+        source='student.matric_number', read_only=True
+    )
+    contribution_title = serializers.CharField(
+        source='contribution.title', read_only=True, default=None
+    )
+    proof_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Payment
+        fields = [
+            'id',
+            'reference',
+            'student_name',
+            'student_matric',
+            'contribution',
+            'contribution_title',
+            'amount',
+            'channel',
+            'note',
+            'proof_url',
+            'status',
+            'created_at',
+        ]
+
+    def get_student_name(self, obj):
+        return obj.student.get_full_name() or obj.student.username
+
+    def get_proof_url(self, obj):
+        if not obj.proof:
+            return None
+        request = self.context.get('request')
+        url = obj.proof.url
+        return request.build_absolute_uri(url) if request else url

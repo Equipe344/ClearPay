@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -10,6 +11,7 @@ from django.db import IntegrityError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -25,7 +27,7 @@ from .bmoni_client import (
 from .models import BMONIWebhookEvent, DepartmentBMONIWallet, Payment, Transaction
 from .serializers import DepartmentBankAccountSerializer, PaymentSerializer
 from .permissions import IsAdminUser
-from .serializers import UnverifiedPaymentSerializer
+from .serializers import PendingPaymentSerializer, UnverifiedPaymentSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -896,3 +898,209 @@ class BMONIWebhookView(APIView):
             event_type, event_id,
         )
         return Response({'received': True})
+
+
+# ---------------------------------------------------------------------------
+# Offline self-reported payments (bank transfer / POS / cash) with proof
+# upload. A student submits -> the row lands `pending` -> a rep/admin reviews
+# it. Money is never credited on the student's word alone.
+# ---------------------------------------------------------------------------
+
+
+def _student_contribution_or_error(request, contribution_id):
+    """Resolve the fee a student may legitimately pay, or (None, Response)."""
+    try:
+        contribution_id = int(contribution_id)
+    except (TypeError, ValueError):
+        return None, Response(
+            {'error': 'bad_request', 'message': 'contribution_id must be a number.'},
+            status=400,
+        )
+
+    user = request.user
+    contribution = (
+        Contribution.objects.filter(
+            id=contribution_id, department=user.department
+        )
+        .filter(Contribution.open_q())
+        .filter(Q(target_level__isnull=True) | Q(target_level=user.level))
+        .first()
+    )
+    if contribution is None:
+        return None, Response(
+            {'error': 'not_found', 'message': 'Contribution not found or not available to you.'},
+            status=404,
+        )
+    return contribution, None
+
+
+class SubmitOfflinePaymentView(APIView):
+    """
+    POST /api/payments/submit/ (student, multipart)
+
+    A student who paid outside the gateway (bank transfer / POS / cash) uploads
+    a proof screenshot. The row is created `pending` — the amount always comes
+    from the contribution, never the client — and is only credited once a
+    rep/admin approves it (ReviewPaymentView).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        channel = (request.data.get('channel') or '').strip()
+        if channel not in (
+            Payment.CHANNEL_BANK_TRANSFER,
+            Payment.CHANNEL_POS,
+            Payment.CHANNEL_CASH,
+        ):
+            return Response(
+                {'error': 'bad_request', 'message': 'channel must be bank_transfer, pos or cash.'},
+                status=400,
+            )
+
+        contribution, error = _student_contribution_or_error(
+            request, request.data.get('contribution_id')
+        )
+        if error is not None:
+            return error
+
+        user = request.user
+        if Payment.objects.filter(
+            student=user, contribution=contribution, status=Payment.STATUS_SUCCESS
+        ).exists():
+            return Response(
+                {'error': 'already_paid', 'message': 'You have already paid for this contribution.'},
+                status=409,
+            )
+
+        # One live self-report per student+fee: re-submitting replaces it, so a
+        # rejected-then-retried submission never piles up duplicate rows.
+        payment = Payment.objects.filter(
+            student=user,
+            contribution=contribution,
+            method=Payment.METHOD_MANUAL,
+            status=Payment.STATUS_PENDING,
+        ).first()
+
+        if payment is None:
+            payment = Payment(
+                student=user,
+                contribution=contribution,
+                payment_type=Payment.PAYMENT_CONTRIBUTION,
+                amount=contribution.amount,
+                method=Payment.METHOD_MANUAL,
+                status=Payment.STATUS_PENDING,
+                reference=f'SELF-{contribution.id}-{user.id}-{uuid.uuid4().hex[:6]}',
+            )
+
+        payment.channel = channel
+        payment.note = (request.data.get('note') or '').strip()[:255]
+        proof = request.FILES.get('proof')
+        if proof:
+            payment.proof = proof
+        payment.save()
+
+        return Response(
+            {
+                'message': 'Submitted for review.',
+                'payment': PaymentSerializer(payment, context={'request': request}).data,
+            },
+            status=201,
+        )
+
+
+class PendingPaymentsView(APIView):
+    """GET /api/payments/pending/ — rep/admin queue of self-reports awaiting review."""
+
+    permission_classes = [permissions.IsAuthenticated, IsClassRepOrAdmin]
+
+    def get(self, request):
+        qs = (
+            Payment.objects.filter(
+                status=Payment.STATUS_PENDING,
+                method=Payment.METHOD_MANUAL,
+                contribution__isnull=False,
+            )
+            .select_related('student', 'contribution')
+        )
+        # A class rep only reviews their own department's submissions.
+        if request.user.role == 'class_rep' and request.user.department_id:
+            qs = qs.filter(contribution__department_id=request.user.department_id)
+
+        return Response(
+            {
+                'count': qs.count(),
+                'results': PendingPaymentSerializer(
+                    qs, many=True, context={'request': request}
+                ).data,
+            }
+        )
+
+
+class ReviewPaymentView(APIView):
+    """POST /api/payments/{id}/review/ — rep/admin approves or rejects a
+    self-reported offline payment. Approving credits it (and notifies the
+    student via the payments signal); rejecting marks it failed."""
+
+    permission_classes = [permissions.IsAuthenticated, IsClassRepOrAdmin]
+
+    def post(self, request, pk):
+        payment = (
+            Payment.objects.filter(
+                pk=pk, method=Payment.METHOD_MANUAL, status=Payment.STATUS_PENDING
+            )
+            .select_related('contribution')
+            .first()
+        )
+        if payment is None:
+            return Response(
+                {'error': 'not_found', 'message': 'No pending offline payment with that id.'},
+                status=404,
+            )
+
+        if request.user.role == 'class_rep' and request.user.department_id != (
+            payment.contribution.department_id if payment.contribution_id else None
+        ):
+            return Response(
+                {'error': 'forbidden', 'message': 'That payment is not in your department.'},
+                status=403,
+            )
+
+        action = (request.data.get('action') or '').strip()
+        note = (request.data.get('note') or '').strip()
+
+        if action == 'approve':
+            # Never double-credit: if a success already exists for this student
+            # + fee, the rep gets the honest 409 instead of a second success.
+            if payment.contribution_id and Payment.objects.filter(
+                student_id=payment.student_id,
+                contribution_id=payment.contribution_id,
+                status=Payment.STATUS_SUCCESS,
+            ).exclude(pk=payment.pk).exists():
+                return Response(
+                    {'error': 'already_paid', 'message': 'This student already has a successful payment for this contribution.'},
+                    status=409,
+                )
+            payment.status = Payment.STATUS_SUCCESS
+            payment.recorded_by = request.user
+            if note:
+                payment.receipt_reference = note[:50]
+            _save_settled(payment)
+        elif action == 'reject':
+            payment.status = Payment.STATUS_FAILED
+            if note:
+                payment.note = note[:255]
+            payment.save()
+        else:
+            return Response(
+                {'error': 'bad_request', 'message': "action must be 'approve' or 'reject'."},
+                status=400,
+            )
+
+        return Response(
+            {
+                'message': 'Payment reviewed.',
+                'payment': PaymentSerializer(payment, context={'request': request}).data,
+            }
+        )

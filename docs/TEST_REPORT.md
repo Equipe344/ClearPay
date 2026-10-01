@@ -1,5 +1,11 @@
 # TEST_REPORT.md — Agent 5 (QA) Contract Verification
-**Date:** 2026-09-16 (updated after the settlement/audit sprint) · **Suite at report time:** 152 tests, all passing (`manage.py test` → OK). *Current suite: 266 tests (Phase 3 added contribution edit/close + analytics; BMONI Phase 1 added the department bank-account + webhook endpoints; live-HTTP smoke verified against a running dev server); per-endpoint verdicts below are unchanged — every listed shape still holds.*
+**Date:** 2026-09-16 (updated 2026-10-01: offline proof-review endpoints + admin user lookup) · **Suite at report time:** 152 tests, all passing (`manage.py test` → OK). *Current suite: 271 tests (Phase 3 added contribution edit/close + analytics; BMONI Phase 1 added the department bank-account + webhook endpoints; §3b added the offline proof-review endpoints + the `GET /auth/users/` lookup; live-HTTP smoke + a 20-check scripted live E2E verified against a running dev server); per-endpoint verdicts below are unchanged — every listed shape still holds.*
+
+## Status board (2026-10-01 — what shipped after the Sept 16 report)
+
+- `Payment` gained `channel` / `note` / `proof` (migration `payments.0007`) — needed for the §3b self-reported flow. The history key set now includes `channel`, `note`, `proof_url`; the happy-path contract test was updated to lock the new set, and 5 new tests (`apps/payments/tests_offline.py`) cover submit → pending → approve / reject / 409 / 403.
+- Contract stats are now: **v2.4 · 271 tests passing** (3 skips are the opt-in BMONI sandbox checks).
+- Live verification rerun: `python backend/smoke_test.py` (needs a `smoke.rep` seed on the dev DB) plus a 20-check scripted E2E covering register, login-by-identifier, contribution create, offline proof submit → rep review → `has_paid`, user lookup + set-role, reset-code issue/redeem, roster import → claim → login.
 **Scope:** every endpoint in `API_CONTRACT.md` v2 — status codes + documented response shapes — plus the settlement, audit and roster flows added this sprint. Per `AGENTS.md`, mismatches were flagged; after owner review, M-1/M-2/M-3/M-5/M-6 were **fixed to match the contract** and their tests updated together; M-4 was resolved by owner decision (deferred to the Data/AI teammate, handover in `docs/ANALYTICS_INTEGRATION.md`).
 
 ## Per-endpoint verdicts
@@ -18,6 +24,7 @@
 | 1 | POST `/auth/reset-code/` | ✅ | 201/403 | (unspecified) | ✅ rep/admin only; single-use, expiring code |
 | 1 | POST `/auth/reset-password/` | ✅ | 200/400 | (unspecified) | ✅ replay, expiry and wrong-matric all rejected |
 | 1 | POST `/auth/users/{id}/set-role/` | ✅ | 200/400/403 | (unspecified) | ✅ admin only; never grants `admin`; no self-change |
+| 1 | GET `/auth/users/?search=` | ✅ | 200/403 | (search) | ✅ admin only; non-sensitive fields, capped at 20 |
 | 2 | GET `/departments/` | ✅ | 200 | (unspecified) | ✅ `{id, name, faculty}` locked |
 | 3 | GET `/contributions/` | ✅ | 200 | `{id, title, amount, deadline, is_mandatory, target_level, has_paid}` | ✅ matches; amount is a string |
 | 3 | POST `/contributions/` | ✅ | 201/403 | same shape | ✅ matches (students → 403 `{error, message}`) |
@@ -27,6 +34,9 @@
 | 3 | POST `/contributions/{id}/payments/` | ✅ | 201/409 | `{student, matric_number, status, paid_at, method}` | ✅ matches (`method: "manual"`, duplicate → `409 already_paid`) |
 | 4 | POST `/payments/initiate/` | ✅ | 200/409 | `{reference, checkout_url}` | ✅ matches (superset: keeps `message`, `payment`, legacy `authorization_url`) |
 | 4 | POST `/payments/webhook/` | ✅ | 200/400 | `{"received": true}` | ✅ matches on every return path |
+| 4 | POST `/payments/submit/` | ✅ | 201/400/404/409 | `{message, payment}` | ✅ student self-report → `pending`; amount server-side; one live row per student+fee |
+| 4 | GET `/payments/pending/` | ✅ | 200/403 | `{count, results}` | ✅ rep/admin (rep = own department); proof links included; students → 403 |
+| 4 | POST `/payments/{id}/review/` | ✅ | 200/400/404/409 | `{message, payment}` | ✅ rep/admin approve → `success` (settlement-guarded) / reject → `failed` |
 | 4 | GET `/payments/verify/{reference}/` | ✅ | 200 | (unspecified) | ✅ `{message, payment:{…}}` locked |
 | 4 | GET `/payments/history/` | ✅ | 200 | `[{id, contribution(title), amount, status, verified_at}]` | ✅ matches |
 | 4 | GET `/payments/{id}/receipt/` | ✅ | 200/404 | (unspecified) | ✅ PaymentSerializer shape locked |

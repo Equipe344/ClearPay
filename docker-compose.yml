@@ -1,0 +1,48 @@
+# Optional local container run: backend + PostgreSQL in one command.
+#
+#   docker compose up --build      # then open http://127.0.0.1:8000/api/health/
+#
+# This is a LOCAL convenience that mirrors production (Postgres, Gunicorn). It is
+# NOT the production deploy — production uses render.yaml. The values here are
+# deliberately obvious local-only placeholders; never reuse them anywhere real.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dpt
+      POSTGRES_USER: dpt
+      POSTGRES_PASSWORD: dpt_local_password
+    volumes:
+      - dpt_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dpt -d dpt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Local-only. Production gets its own values from the Render dashboard.
+      SECRET_KEY: docker-local-dev-secret-key-change-me
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      DATABASE_URL: postgres://dpt:dpt_local_password@db:5432/dpt
+      NUM_PROXIES: "0"
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # Override with real test keys when you want to exercise Paystack locally:
+      #   PAYSTACK_SECRET_KEY=sk_test_... docker compose up --build
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-sk_test_dummy_local}
+      PAYSTACK_PUBLIC_KEY: ${PAYSTACK_PUBLIC_KEY:-pk_test_dummy_local}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Uploaded payment proofs survive a container restart during local testing.
+      - dpt_media:/app/media
+
+volumes:
+  dpt_pgdata:
+  dpt_media:

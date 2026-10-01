@@ -1,0 +1,4 @@
+# Shell scripts must stay LF even when checked out on Windows — a CRLF
+# entrypoint.sh fails inside the Linux container. The Dockerfile also strips
+# CR defensively, but this keeps new checkouts correct from the start.
+*.sh text eol=lf

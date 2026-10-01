@@ -1,6 +1,6 @@
 # Backend API Contract — Departmental Payment/Contribution System
 Team Visionary Coders — NACOS National Build Challenge
-**v2 — reviewed and updated with student-level fields, error handling, and gap fixes**
+**v2.4 — offline proof review (§3b) + admin user lookup (`GET /auth/users/`) · 271 tests passing**
 
 This is what the backend exposes. Frontend builds against these endpoints;
 whoever's on the Payment Gateway side needs the `/payments/` section especially.
@@ -18,6 +18,14 @@ Base URL (local dev): `http://localhost:8000/api/`
 | POST | `/auth/logout/` | Invalidate token |
 | GET | `/auth/me/` | Get current logged-in user's profile |
 | PATCH | `/auth/me/` | **NEW** — Update editable profile fields |
+| POST | `/auth/import/` | **NEW** — Admin: bulk-register students from a CSV roster (dry-run supported) |
+| POST | `/auth/claim/` | **NEW** — Imported student sets their first password |
+| GET | `/auth/claim-batches/` | **NEW** — Admin: list shared claim codes |
+| POST | `/auth/claim-batches/{id}/deactivate/` | **NEW** — Admin: retire a claim code |
+| POST | `/auth/reset-code/` | **NEW** — Rep/admin: issue a one-time password-reset code |
+| POST | `/auth/reset-password/` | **NEW** — Student sets a new password with that code |
+| POST | `/auth/users/{id}/set-role/` | **NEW** — Admin: promote a student to class rep |
+| GET | `/auth/users/?search=` | **NEW** — Admin: find a user by matric/username/name (lookup for set-role) |
 
 **POST /auth/register/**
 ```json
@@ -31,22 +39,47 @@ Base URL (local dev): `http://localhost:8000/api/`
 ```
 `level` is new — one of `"100"`, `"200"`, `"300"`, `"400"`, `"500"`.
 
+**Registration hardening (v2.1):**
+- A username must not contain `@`; use email or matric number separately at login.
+- Duplicate `username`, `email`, or `matric_number` values are checked
+  case-insensitively and return the same generic `400` error below — the response
+  never reveals which identifier collided.
+- Privileged account fields such as `role`, `is_staff`, `is_superuser`, and
+  `is_active` are ignored: public registration always creates an active student.
+- Privilege fields are also ignored by `PATCH /auth/me/`.
+
+```json
+// Response  400 for any duplicate identifier
+{ "error": "bad_request", "message": "Unable to register with the provided details." }
+```
+
 **POST /auth/login/**
 ```json
-// Request
+// Request — use exactly one of username, email, or matric_number
 { "username": "jdoe", "password": "..." }
+{ "email": "JDOE@school.edu.ng", "password": "..." }
+{ "matric_number": "csc/2021/045", "password": "..." }
 
 // Response  200
 { "token": "9f8a3b...", "user": { "id": 12, "username": "jdoe", "role": "student" } }
 ```
 Frontend stores the token and sends it as `Authorization: Token <token>` on every request after this.
 
+**Login identifier rules (v2.1):**
+- `email` and `matric_number` are matched case-insensitively.
+- `username` remains exact-case and cannot be used as an email-like identifier.
+- A missing, invalid, inactive, or unclaimed account returns the same generic
+  `400 { "error": "bad_request", "message": "Invalid username or password." }`.
+
 **GET /auth/me/**
 ```json
 // Response  200
 { "id": 12, "username": "jdoe", "email": "jdoe@school.edu.ng", "matric_number": "CSC/2021/045",
-  "department": "Computer Science", "level": "400", "role": "student", "phone_number": "" }
+  "department": "Computer Science", "full_name": "John Doe", "level": "400",
+  "role": "student", "phone_number": "" }
 ```
+`full_name` is read-only. It joins trimmed first and last names; when both are
+blank, it falls back to `username`. It is not accepted as a profile-edit field.
 
 **PATCH /auth/me/**  — NEW, fixes a real gap: students had no way to update their own info after registering
 ```json
@@ -55,7 +88,109 @@ Frontend stores the token and sends it as `Authorization: Token <token>` on ever
 
 // Response  200 → same shape as GET /auth/me/
 ```
-`username`, `email`, and `matric_number` are NOT editable here — those need admin intervention if wrong (out of scope for now; flag to the team if this becomes a real need).
+Only `phone_number` and `level` are freely editable. `department_id` may be set
+once while it is empty. `username`, `email`, `matric_number`, `department`,
+`full_name`, and `role` are read-only; privileged account flags such as
+`is_staff`, `is_superuser`, and `is_active` are ignored.
+
+### Roster import + account claiming (NEW)
+
+**Why this exists:** most students pay online (so they self-register), but a department
+wants the *complete* class roster on file — otherwise "who hasn't paid" only tracks people
+who bothered to sign up, and someone can escape dues simply by never registering.
+
+**POST /auth/import/** (admin only, `multipart/form-data`)
+```
+fields: file=<students.csv>   dry_run=true|false
+```
+CSV header — **only `first_name` and `matric_number` are required**. A department's records
+often don't include department/level/email, so those columns are optional and the student
+completes their profile later:
+```csv
+first_name,last_name,matric_number,level,department,email
+Chidi,Okafor,CSC/2021/045,400,Computer Science,
+```
+```json
+// Response  200
+{ "created": 180, "skipped_existing": 12, "errors_total": 8, "dry_run": false,
+  "errors": [ { "row": 14, "matric_number": "CSC/2021/014", "errors": ["invalid level: 600"] } ],
+  "claim_batch_code": "K7QM4X2P9R" }
+```
+- `dry_run=true` validates and reports **without writing anything** — run this first.
+- Re-uploading a corrected file is safe: existing matric numbers are reported under
+  `skipped_existing`, never duplicated.
+- Created accounts get **no password at all** — they physically cannot be logged into
+  until claimed. Nothing is distributed per student, which is what makes 2,000+ rows
+  manageable: the admin shares **one** `claim_batch_code` per class.
+
+**POST /auth/claim/** (public, throttled like login)
+```json
+// Request
+{ "matric_number": "CSC/2021/045", "first_name": "Chidi",
+  "batch_code": "K7QM4X2P9R", "password": "...", "email": "chidi@school.edu.ng" }
+
+// Response  200
+{ "message": "Account claimed successfully. You can now log in.", "username": "CSC/2021/045" }
+```
+`email` is optional here (imported rows may not have had one) — the student adds it.
+Username is derived from the matric number. **Every** failure before the password check
+returns the same generic `{ "error": "claim_failed" }`, so this endpoint can't be used to
+probe which matric numbers exist (§8).
+
+**GET /auth/claim-batches/** (admin only) → last 50 batches: `id`, `code`, `is_active`, `created_at`.
+**POST /auth/claim-batches/{id}/deactivate/** (admin only) — retire a code once the claim window closes.
+
+### Password reset — "Option A" (NEW, no email dependency)
+
+Deliberate choice: this student population has no reliable email, so a reset is
+**assisted but self-service at the password step**. A rep/admin hands over a one-time
+code in person; the student sets the new password themselves — the rep never sees it.
+
+**POST /auth/reset-code/** (class rep/admin)
+```json
+// Request
+{ "matric_number": "CSC/2021/045" }
+
+// Response  200
+{ "matric_number": "CSC/2021/045", "code": "4X2P9RK7", "expires_in_minutes": 30 }
+```
+Reps are scoped to their own department (admins reach anyone). Issuing a new code retires
+any previous live code for that student, so only one can ever work. Accounts that have not
+been claimed yet return `400` — those students use `/auth/claim/` instead.
+
+**POST /auth/reset-password/** (public, throttled like login)
+```json
+// Request
+{ "matric_number": "CSC/2021/045", "code": "4X2P9RK7", "new_password": "..." }
+
+// Response  200  { "message": "Password updated. You can now log in." }
+```
+Errors: `invalid_code` / `code_expired` / `weak_password`. Codes are **single-use** and
+expire after 30 minutes.
+
+### Rep promotion (NEW)
+
+**POST /auth/users/{id}/set-role/** (admin only)
+```json
+// Request
+{ "role": "class_rep" }        // or "student" to demote
+
+// Response  200  { "id": 12, "username": "jdoe", "role": "class_rep" }
+```
+**Reps are ordinary students until an admin ticks them.** Promotion grants the
+mark-paid-offline power, so it can never happen through self-service. This endpoint can
+only ever set `student`/`class_rep` (never `admin`), and an admin cannot change their own
+role.
+
+**GET /auth/users/?search=csc/2021/045** (admin only) — find a user by matric number
+(`matric_number=` also accepted), username, or name. Resolves the numeric id the
+`set-role` route needs. Capped at 20, non-sensitive fields only.
+```json
+// Response  200
+[ { "id": 12, "username": "CSC/2021/045", "full_name": "John Doe",
+    "matric_number": "CSC/2021/045", "role": "student",
+    "department": "Computer Science" } ]
+```
 
 ---
 
@@ -74,31 +209,73 @@ Frontend stores the token and sends it as `Authorization: Token <token>` on ever
 | GET | `/contributions/` | List active contributions for the logged-in student's department (and matching level, if set) |
 | POST | `/contributions/` | Create a new contribution (class rep/admin only) |
 | GET | `/contributions/{id}/` | Get one contribution's detail |
+| PATCH | `/contributions/{id}/` | **NEW (Phase 3)** — Edit a fee's title/amount/deadline/level (class rep/admin only) |
+| DELETE | `/contributions/{id}/` | **NEW (Phase 3)** — **Close** a fee (soft-close, never deleted; class rep/admin only) |
 | GET | `/contributions/{id}/summary/` | Total expected vs collected (feeds Data/AI dashboard) |
 | GET | `/contributions/{id}/payments/` | **NEW** — Full list of every student's payment status for this contribution (class rep/admin only) |
 
 **GET /contributions/**
 ```json
-// Response  200
+// Response  200  (students see only open fees for their level; reps/admins see
+// every fee in their department, including closed ones)
 [
-  { "id": 5, "title": "Departmental Shirt 2026", "amount": "3500.00",
-    "deadline": "2026-09-30T23:59:00Z", "is_mandatory": true, "target_level": null,
-    "has_paid": false }
+  { "id": 5, "title": "Departmental Shirt 2026", "description": "Annual shirt",
+    "amount": "3500.00", "deadline": "2026-09-30T23:59:00Z", "is_mandatory": true,
+    "target_level": null, "is_closed": false, "has_paid": false,
+    "department_id": 3, "created_at": "2026-09-01T09:00:00Z" }
 ]
 ```
 `has_paid` is computed per the logged-in student so the frontend doesn't have to.
 `target_level: null` means it applies to every level; otherwise a value like `"400"`
-means only that level sees/owes it.
+means only that level sees/owes it. `is_closed` lets reps/admins render closed fees
+greyed-out with a "reopen" action — students never receive closed fees at all.
 
 **POST /contributions/**  (class rep/admin only)
 ```json
-// Request
+// Request — deadline is required; use null for an open-ended collection
 { "title": "Excursion Fee", "description": "...", "amount": "5000.00",
   "deadline": "2026-10-15T23:59:00Z", "is_mandatory": true, "target_level": "400" }
 
-// Response  201 → same shape as GET
+// Response  201 — the same shape as a GET detail row
+{ "id": 5, "title": "Excursion Fee", "description": "Trip", "amount": "5000.00",
+  "deadline": "2026-10-15T23:59:00Z", "is_mandatory": true, "target_level": "400",
+  "is_closed": false, "has_paid": false, "department_id": 3,
+  "created_at": "2026-09-16T12:00:00Z" }
 ```
-`target_level` is optional — omit or send `null` for a contribution that applies to the whole department.
+`deadline` must be present: omitting it is `400`; sending an explicit `null`
+creates an open-ended contribution. `target_level` is optional — omit or send
+`null` for a contribution that applies to the whole department.
+
+Class representatives should not send `department_id`: the backend always uses
+their own department. Admins may optionally send it to target another
+department; a system admin without a department must do so.
+
+**PATCH /contributions/{id}/**  — Phase 3 (class rep/admin only)
+Partial edit of a fee: send only the fields you're changing. Editable fields are
+`title`, `description`, `amount`, `deadline`, `is_mandatory`, `target_level` and
+`is_closed`. `department_id` is **ignored for reps** — a rep may never move a fee
+to another department; only a system admin may.
+```json
+// Request (any subset)
+{ "amount": "6500.00", "deadline": "2026-10-20T23:59:00Z" }
+
+// Response  200 — the full updated row, same shape as GET detail
+{ "id": 5, "…": "…", "amount": "6500.00", "is_closed": false }
+```
+Errors: `403` for students (they can't edit any fee) and `404` for a fee outside
+the caller's department (existence is never leaked across departments). Reopening
+a closed fee is just `PATCH { "is_closed": false }` — students see it again and it
+becomes payable, with every historical payment intact.
+
+**DELETE /contributions/{id}/**  — Phase 3 (class rep/admin only)
+"Deleting" a fee **closes** it instead: `204 No Content`, and the row survives with
+`is_closed: true`. A fee that ever took a payment is audit evidence — it must never
+vanish. A closed fee:
+- disappears from every student's list and can't be initiated (`404`, same as an
+  expired fee — a stale id can't start a payment nobody is accepting);
+- stays visible to its department's reps/admins (greyed-out) so totals, summaries
+  and `outstanding-students` keep reporting it;
+- keeps every collected total and every `Payment` row exactly as they were.
 
 **GET /contributions/{id}/payments/**  — NEW (class rep/admin only)
 ```json
@@ -112,6 +289,75 @@ This is the gap `outstanding-students` (section 6) didn't cover — that endpoin
 owes money; this one shows everyone's status, paid or not, which a class rep will want for a
 full picture.
 
+**POST /contributions/{id}/payments/**  — NEW (class rep/admin only)
+Marks a student as paid **without** an online gateway transaction — for when a student has
+paid offline (cash, transfer) and the class rep updates the record on their behalf. The
+amount is ALWAYS the contribution's amount, set server-side; the student is never asked for
+a price.
+
+```json
+// Request
+{ "matric_number": "CSC/2021/045", "receipt_reference": "RCPT-8842" }
+
+// Response  201
+{ "student": "Chidi Okafor", "matric_number": "CSC/2021/045", "status": "success",
+  "paid_at": "2026-09-10T12:00:00Z", "method": "manual" }
+```
+
+### Self-reported offline payments with proof — reviewed, not trusted (§3b)
+
+The rep-entered route above covers cash the rep collected. For money the rep
+never saw (a bank transfer or POS receipt, or cash the student handed someone
+else), the **student** claims the payment and uploads a screenshot; a rep/admin
+reviews it. Two routes, one ledger — the credited row passes the same §8
+settlement guard in both cases.
+
+**POST /payments/submit/** — student, multipart (`contribution_id`, `channel`
+one of `bank_transfer` / `pos` / `cash`, optional `note`, optional `proof`
+file). Amount is always the contribution's, set server-side. One live
+self-report per student+fee: re-submitting replaces the previous `pending` row.
+```json
+// Response  201
+{ "message": "Submitted for review.",
+  "payment": { "reference": "SELF-5-12-9f3a2c", "status": "pending",
+               "method": "manual", "channel": "bank_transfer",
+               "proof_url": "http://127.0.0.1:8000/media/proofs/2026/10/proof.png", ... } }
+```
+
+**GET /payments/pending/** (rep/admin) — the review queue. A rep sees only their
+own department's submissions.
+```json
+// Response  200
+{ "count": 1, "results": [
+  { "id": 7, "reference": "SELF-5-12-9f3a2c", "student_name": "John Doe",
+    "student_matric": "CSC/2021/045", "contribution_title": "Departmental Shirt 2026",
+    "amount": "3500.00", "channel": "bank_transfer", "note": "paid at the bank",
+    "proof_url": "…", "status": "pending", "created_at": "…" } ] }
+```
+
+**POST /payments/{id}/review/** (rep/admin) — `{ "action": "approve" | "reject",
+"note"?: "" }`. Approving credits the payment (and notifies the student);
+rejecting marks it `failed`.
+```json
+// Response  200
+{ "message": "Payment reviewed.", "payment": { "status": "success", ... } }
+```
+
+**`receipt_reference` is required** (teller slip / receipt-book / transfer reference).
+It is the audit hook that makes an offline mark reconcilable: the Payment row stores both
+`receipt_reference` and `recorded_by` (who marked it), so a rep's marks can always be
+listed and checked against cash actually banked. Missing it → `400 bad_request`.
+
+The student is notified that the mark happened ("your rep recorded an offline payment of
+₦X — report it if this is wrong"), so students police their own records.
+
+Guards, all returning `400`/`403`/`409` before any write:
+- the student must be in the **same department** as the contribution, and in the
+  contribution's `target_level` when one is set (a bogus row would inflate collected totals);
+- a rep **cannot mark themselves** paid (only a real admin may);
+- if the student already has a `success` payment (online or manual) for this contribution,
+  returns `409 already_paid` — same rule as `/payments/initiate/`.
+
 ---
 
 ## 4. Payments  ⚠️ most important section for the Payment Gateway person
@@ -123,6 +369,12 @@ full picture.
 | GET | `/payments/verify/{reference}/` | Manually re-check a payment's status |
 | GET | `/payments/history/` | Logged-in student's own payment history |
 | GET | `/payments/{id}/receipt/` | Digital receipt for one payment |
+| GET | `/payments/departments/{id}/bank-account/` | **NEW** — the department's own NGN account, to pay by bank transfer (section 4a) |
+| POST | `/payments/departments/{id}/bank-account/` | **NEW** — rep/admin: create that account through BMONI (idempotent) |
+| POST | `/payments/bmoni/webhook/` | **NEW** — BMONI calls this automatically — no user, no auth token |
+| POST | `/payments/submit/` | Student submits an offline (bank transfer / POS / cash) payment with proof → `pending` (§3b) |
+| GET | `/payments/pending/` | Rep/admin queue of self-reported offline payments awaiting review (§3b) |
+| POST | `/payments/{id}/review/` | Rep/admin approves or rejects a self-reported payment — `action: approve \| reject` (§3b) |
 
 **POST /payments/initiate/**
 ```json
@@ -144,6 +396,61 @@ returns a `409 Conflict` instead of creating a new attempt:
 If a previous attempt exists but is `pending` or `failed`, initiating again is allowed —
 this creates a new attempt so a failed/abandoned payment doesn't block retrying.
 
+**Amount rule — the settlement gate (applies to BOTH the webhook and `/payments/verify/`)**
+The amount charged by the gateway must equal the contribution's amount **exactly**
+(compared in integer kobo; the amount is always taken server-side, never from the client).
+- exact match → `success`
+- **underpayment** → `failed` + `refund_status: pending_review`
+- **overpayment** → `failed` + `refund_status: pending_review`
+- gateway amount missing/unreadable → `failed` (never credit on trust)
+- a charge that would be a **duplicate** success for the same fee → `failed` +
+  `refund_status: pending_review` (the student was charged twice; someone must refund one)
+
+The student's notification states which way the amount was wrong, so they know what to do.
+
+**Refunds are NEVER automatic.** A mismatch sets `refund_status` to `pending_review` and
+a human reviews it in the Django admin (*Payments → filter by refund status*) before money
+moves. `paid_amount` records what the gateway actually took, so the review has the real
+figure. Transitions: `none` → `pending_review` → `refunded` / `rejected`. A webhook retry
+never overwrites an already-reviewed refund flag (that would risk a double refund).
+
+`/payments/initiate/` also refuses a fee whose `deadline` has already passed. It answers
+`404 not_found` — **not** `400` — because an expired fee is *invisible* to students
+(the contributions list hides it too), so a stale id can't reveal that the fee
+exists or start a payment for a collection nobody is accepting:
+```json
+// Response  404
+{ "error": "not_found", "message": "Contribution not found or not available to you." }
+```
+
+**Gateway failure handling (v2.1):**
+Request timeouts, non-JSON responses, and unsuccessful or incomplete gateway
+responses for `/payments/initiate/` and `/payments/verify/{reference}/` return:
+```json
+// Response  502
+{ "error": "gateway_unavailable", "message": "Payment gateway is unavailable. Try again shortly." }
+```
+These responses never expose raw gateway payloads or provider exception details.
+Logs record only safe operation/status metadata (and the payment reference on
+webhook settlement); secrets, authorization headers, and raw payloads are never
+logged. Raw webhook payloads remain archived in `payments.Transaction` for audit.
+
+**GET /payments/verify/{reference}/**
+The student's own "refresh status" call for a payment *they* started — it never
+returns another student's row.
+```json
+// Response  200  (status is re-checked against the gateway)
+{ "message": "Payment verification completed.", "payment": { "…": "PaymentSerializer shape" } }
+
+// Response  404  (unknown reference, or someone else's — no existence leak)
+{ "error": "not_found", "message": "Payment not found." }
+```
+Only a **terminal** gateway outcome changes the row: `success` applies the amount
+rule above, `failed`/`reversed` mark the attempt `failed`, and non-terminal
+outcomes (`abandoned`, `pending`, `ongoing`, `processing`) leave the payment
+exactly as it was — the student just closed the checkout or the charge hasn't
+settled yet. Re-checking is always safe to retry.
+
 **POST /payments/webhook/**  (called by the gateway, not the frontend)
 ```json
 // Incoming payload (Paystack shape, example)
@@ -151,8 +458,19 @@ this creates a new attempt so a failed/abandoned payment doesn't block retrying.
 
 // Response  200  { "received": true }
 ```
-Backend verifies the signature, matches `reference` to a `Payment` row, marks it `success`, logs the
-raw payload to `Transaction`, and fires a `Notification`. Invalid signature → `400`, no processing.
+Backend verifies the signature, matches `reference` to a `Payment` row **by exact reference
+string only** (never "latest pending payment for this student"), applies the amount rule
+above, and fires a `Notification`. Invalid signature → `400`, no processing. Malformed body
+(non-JSON, non-dict, or a `data` block that isn't an object) → `400`.
+
+**Idempotent by design:** a webhook for a payment that is already `success` returns
+`{"received": true}` and changes nothing, so Paystack's retries can never double-credit a
+student.
+
+**Webhook proof record:** the first delivery for each reference is archived
+verbatim in `payments.Transaction` (`payment`, `reference`, `raw_payload`,
+`received_at`). Retries do not create duplicate proof rows; unknown references
+are still retained with `payment: null` for forensics.
 
 **GET /payments/history/**
 ```json
@@ -162,6 +480,79 @@ raw payload to `Transaction`, and fires a `Notification`. Invalid signature → 
     "status": "success", "verified_at": "2026-09-06T18:20:00Z" }
 ]
 ```
+
+---
+
+### 4a. Department NGN bank accounts (BMONI Embedded) — NEW in v2.3
+
+Every department can have its own **real NGN virtual bank account**, issued by
+BMONI for a BVN-verified account holder. Students pay into it by an ordinary bank
+transfer — the alternative to the Paystack card flow. The account is stored
+server-side the moment BMONI issues it, so the payment screen never depends on
+BMONI being reachable.
+
+| Method | Endpoint | Who | Purpose |
+|---|---|---|---|
+| GET | `/payments/departments/{id}/bank-account/` | Any member of that department (reps/admins included; admins may read any department) | Read the account for display |
+| POST | `/payments/departments/{id}/bank-account/` | Class rep (own department only) or admin | Create it through BMONI |
+
+**GET /payments/departments/{id}/bank-account/**
+```json
+// Response  200 — provisioned
+{ "provisioned": true,
+  "department": { "id": 3, "name": "Computer Science", "faculty": "Physical Sciences" },
+  "bank_account": { "account_name": "Dillon Bunch", "account_number": "9845221370",
+                    "bank_name": "PROVIDUS BANK", "bank_code": "000023",
+                    "currency": "NGN", "status": "active",
+                    "provisioned_at": "2026-09-26T21:00:00Z" },
+  "status": "active" }
+
+// Response  200 — no account yet (NOT a 404: this is a normal state)
+{ "provisioned": false,
+  "department": { "id": 3, "name": "Computer Science", "faculty": "Physical Sciences" },
+  "bank_account": null, "status": "pending",
+  "message": "This department has no bank account yet." }
+```
+**Frontend rule:** offer "pay by transfer" only when `provisioned` is `true`, and
+display `bank_account.account_name` **exactly as returned** — that name has to
+match what the student sees in their banking app, or they will think they are
+paying a stranger.
+
+**POST /payments/departments/{id}/bank-account/** — the account holder's details
+```json
+// Request
+{ "first_name": "Bunch", "last_name": "Dillon", "email": "holder@school.edu.ng",
+  "phone_number": "+2348012345678", "bvn": "95888168924" }
+
+// Response  201 — created (200 if the department already had one, same shape)
+{ ...same shape as the GET... }
+```
+- `bvn` must be **11 digits**, and `first_name`/`last_name` must match the BVN
+  holder exactly — BMONI refuses identity verification otherwise.
+- **Idempotent.** A department that already has an account gets that same account
+  back and nothing new is created, so the button is safe to press twice.
+- **The BVN is never stored** — only its last four digits, so a retry has to send
+  it again.
+- `409 conflict` — that holder (same email or phone) is already on **another**
+  department's account. Two departments must never share one bank account, so this
+  is refused before anything is created at BMONI.
+- `400 bad_request` · `503 unavailable` (BMONI not configured on this server) ·
+  `502 gateway_unavailable` (BMONI unreachable, or a response with no usable
+  account). A failed attempt is recorded on the department's row and can be retried.
+
+A "usable account" means one BMONI issued **for this holder**. If BMONI only
+returns a pooled provider account (which it currently does in the sandbox — see
+`BMONI_SANDBOX_RUNBOOK.md` §7), this endpoint answers `502` and stores nothing
+rather than showing students an account whose name is not their department's.
+
+**POST /payments/bmoni/webhook/** — BMONI's own callbacks. No auth token: the
+request is authenticated by an **HMAC-SHA256 signature** in `x-webhook-signature`
+over the raw body, and `x-webhook-event-id` is the dedupe key, so a retried
+delivery is a no-op `200`. Deliveries are archived verbatim — they are the
+evidence behind a deposit. **Crediting a deposit to a student's contribution is
+Phase 2**, so a `200` currently means "received and filed" and nothing more.
+Missing/invalid signature, an unparseable body, or an unconfigured server →
+`400`/`503`, with nothing stored.
 
 ---
 
@@ -176,21 +567,66 @@ raw payload to `Transaction`, and fires a `Notification`. Invalid signature → 
 system-generated only (fired automatically on payment success/failure and new contribution
 creation, per `AGENTS.md`) — frontend never creates these directly.
 
+**GET /notifications/**
+```json
+// Response  200
+[
+  { "id": 18, "notification_type": "payment_success",
+    "message": "Your payment of ₦3,500.00 for \"Departmental Shirt 2026\" was successful.",
+    "contribution": 5, "contribution_title": "Departmental Shirt 2026",
+    "is_read": false, "created_at": "2026-09-20T12:00:00Z" }
+]
+```
+This is the safe serializer shape for both list and mark-read responses.
+`recipient` and other internal/account fields are deliberately not exposed.
+
+**POST /notifications/{id}/read/** returns the same safe shape with `is_read: true`.
+
 ---
 
-## 6. Analytics (feeds the Data/AI person's dashboard)
+## 6. Analytics — BUILT in Phase 3 (feeds the Data/AI person's dashboard)
+
+Read-only aggregate endpoints, scoped to the caller's department. **Class rep/admin
+only** — a student calling either endpoint gets `403 permission_denied`. The
+Data/AI teammate consumes them via a dedicated read-only service account with the
+class-rep role — never from the browser, never from a direct DB query.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/analytics/collection-stats/` | Total collected vs outstanding, per contribution/department |
-| GET | `/analytics/outstanding-students/?contribution_id=5` | List of students who haven't paid a given contribution |
+| GET | `/analytics/collection-stats/` | Totals for one fee (`?contribution_id=5`) or the whole department |
+| GET | `/analytics/outstanding-students/?contribution_id=5` | Students who haven't paid a given contribution |
 
 **GET /analytics/collection-stats/**
 ```json
-// Response  200
+// Response  200 — department-wide (no query param) or one fee (with it)
 { "total_expected": "175000.00", "total_collected": "122500.00", "outstanding_count": 15 }
 ```
-This is the raw data source for any AI assistant feature (e.g. "how much have we collected?") — the assistant layer just queries this endpoint and phrases the answer in natural language, no separate data pipeline needed.
+- `?contribution_id=5` scopes to one fee; without it you get every fee in your
+  department summed. `contribution_id` must belong to **your** department —
+  anything else is `404 not_found` (existence is never leaked across departments);
+  a non-numeric id is `400 bad_request`.
+- Figures come from the **same model methods** `/contributions/{id}/summary/` uses,
+  so the two can never disagree. Closed and expired fees still count — closing a
+  collection never erases what it collected.
+
+**GET /analytics/outstanding-students/?contribution_id=5**
+```json
+// Response  200 — safe identity fields only
+[
+  { "id": 41, "full_name": "Ada Bello", "matric_number": "CSC/2021/061", "level": "400" }
+]
+```
+- `contribution_id` is **required** — "outstanding" is only meaningful against one
+  fee (a department-wide answer across fees of different amounts would be wrong);
+  missing it is `400 bad_request`.
+- Rows are the fee's eligible students (department + level, reps included — reps
+  pay dues too) minus whoever has a successful payment, ordered by matric number.
+- Deliberately excludes emails/phone numbers: this list can be large and must
+  never become a contact-spreading vector.
+
+This is the raw data source for any AI assistant feature (e.g. "how much have we
+collected?") — the assistant layer just queries this endpoint and phrases the
+answer in natural language, no separate data pipeline needed.
 
 ---
 
@@ -201,23 +637,89 @@ Every error follows this shape, so the frontend only needs one error-handling pa
 { "error": "short_machine_code", "message": "Human-readable explanation" }
 ```
 
-| Status | When |
-|---|---|
-| 400 | Bad request — missing/invalid fields, invalid webhook signature |
-| 401 | Missing or invalid auth token |
-| 403 | Logged in, but not allowed (e.g. a student trying to create a contribution) |
-| 404 | Resource doesn't exist (e.g. bad contribution ID) |
-| 409 | Conflict — e.g. duplicate payment attempt (see section 4) |
-| 500 | Unexpected server error |
+| Status | When | `error` value |
+|---|---|---|
+| 400 | Bad request — missing/invalid fields, invalid webhook signature | `bad_request` |
+| 400 | Request body could not be parsed as JSON | `parse_error` |
+| 401 | Missing or invalid auth token — deliberately indistinguishable | `unauthorized` |
+| 403 | Logged in, but not allowed (e.g. a student trying to create a contribution) | `permission_denied` |
+| 404 | Resource doesn't exist **or isn't visible to this user** (e.g. bad contribution ID) | `not_found` |
+| 405 | Wrong HTTP method for that route | `method_not_allowed` |
+| 409 | Conflict — e.g. duplicate payment attempt (see section 4) | `conflict` |
+| 415 | Body sent with an unsupported `Content-Type` (send `application/json`) | `unsupported_media_type` |
+| 429 | Rate limited — login/register are throttled server-side at 10/min per IP | `throttled` |
+| 502 | Upstream payment gateway unavailable, malformed, or unsuccessful | `gateway_unavailable` |
+| 500 | Unexpected server error | **no JSON shape** — Django's own error page (no custom `handler500` exists yet). Show a generic "something went wrong, try again" and log the status. |
+
+A few endpoints return a **domain-specific** code that is more useful than the generic
+one. Branch on `payload.error` when you can; the status code is always authoritative:
+
+| Status | `error` | Where | What the UI should do |
+|---|---|---|---|
+| 409 | `already_paid` | `/payments/initiate/`, `POST /contributions/{id}/payments/` | The fee is already settled — hide "Pay now", refresh the row |
+| 400 | `claim_failed` | `/auth/claim/` | One generic message; the API never says which of matric/first name/code was wrong |
+| 400 | `weak_password` | `/auth/claim/`, `/auth/reset-password/` | Show the password rules returned in `message` |
+| 400 | `invalid_code` / `code_expired` | `/auth/reset-password/` | Codes are single-use and time-boxed — ask for a new one |
+| 400 | `email_taken` | `/auth/claim/` | Ask the student to pick a different email |
+| 403 | `forbidden` | `POST /contributions/{id}/payments/` | A rep may not mark *themselves* paid — only a real admin may |
+| 503 | `unavailable` | `POST /contributions/{id}/payments/` | Offline mark-paid isn't possible for this fee/student |
+| 503 | `unavailable` | `POST /payments/departments/{id}/bank-account/`, `/payments/bmoni/webhook/` | BMONI isn't configured on this server (no API key, or no webhook secret) — the feature is off and nothing was created |
+
+**Rules of thumb for the single handler:** branch on `payload.error`, fall back to the
+status code, and always render `payload.message`. Every error below 500 — including the
+gateway webhook's rejections — carries both keys, so `message` is never missing.
 
 ---
 
 ## Notes for the team
-- All endpoints except `register`, `login`, and `webhook` require the `Authorization: Token <token>` header.
+- All endpoints except `register`, `login`, `claim`, `reset-password`, `departments`, and `webhook` require the `Authorization: Token <token>` header.
 - Admin/class-rep-only endpoints are marked above — backend enforces this via role checks (returning `403` per section 7), frontend just needs to hide those UI actions for regular students.
 - Dates are ISO 8601 UTC. Amounts are strings to avoid floating-point rounding issues — display as-is, don't parse as float.
 
 ## Open questions for the team (not built yet — flagging instead of guessing)
-- **Password reset** — no forgot-password flow exists yet. Worth deciding if this is in scope for the 16 days or explicitly cut for the demo.
+- ~~Password reset~~ — **built**: `/auth/reset-code/` (rep/admin issues a single-use code) and `/auth/reset-password/` (student redeems it). No longer open.
 - **Token expiry** — tokens currently don't expire. Fine for a hackathon demo; flag if the team wants otherwise.
 - **Pagination** — list endpoints (`/contributions/`, `/payments/history/`, `/notifications/`) return everything with no paging. Fine at hackathon scale; would need revisiting for a real deployment.
+- **`500` has no JSON body** — DRF's `EXCEPTION_HANDLER` covers *handled* API errors only; an unhandled exception falls through to Django's own HTML error page, so a genuine 500 is the one status the frontend's single error handler can't read a `message` from. No `handler500` is registered today. The frontend already falls back to a generic "something went wrong" (see `FRONTEND_LINKING.md`), so this is a polish item, not a blocker — but it's the reason the error contract is stated as "every error **below** 500".
+
+---
+
+## 8. Security & authorization rules — binding (added 2026-09-07, security audit)
+
+These apply to every endpoint above. Backend must enforce them; QA must test them.
+
+**Object-level authorization (no IDOR):**
+- `/payments/verify/{reference}/`, `/payments/{id}/receipt/`, `/payments/history/` — a student may only access **their own** payments. Class reps/admins may access payments within their own department.
+- `/notifications/{id}/read/` — only the notification's owner may mark it read; return `404` (not `403`) for other users' notifications so existence isn't leaked.
+- `/contributions/{id}/payments/` — class rep/admin only, scoped to their own department.
+
+**Payment webhook (`/payments/webhook/`) — in addition to signature verification:**
+- **Amount check:** the verified `data.amount` (kobo ÷ 100) must equal the matched `Payment`'s amount. On mismatch, do NOT mark success — mark the payment `failed` and log it.
+- **Idempotency:** duplicate deliveries of the same `charge.success` must be safe no-ops returning `200`. Never create a second `Payment`/`Transaction` for the same reference. Process webhooks inside a DB transaction.
+- Verify the HMAC against the **raw request body** (never re-serialized JSON).
+
+**Analytics (section 6) — permissions decided:** both `/analytics/` endpoints are **class rep/admin only** (`403` for students). The Data/AI teammate consumes them via a dedicated read-only service account with the class-rep role — never from the browser.
+
+**BMONI bank accounts & webhook (section 4a):**
+- `GET /payments/departments/{id}/bank-account/` — readable by that department's own members; another department answers `404`, not `403`, so it is indistinguishable from a department that does not exist.
+- `POST` — class rep/admin only, and a rep is scoped to their own department. Nothing is written unless BMONI actually issued an account number, so a student can never be shown a "pay here" account that does not exist.
+- `/payments/bmoni/webhook/` — HMAC-SHA256 over the **raw** body before parsing, `x-webhook-event-id` as the idempotency key, and a fail-closed `503` when the signing secret is not configured (an unsigned forgery is never trusted).
+- The BVN is never stored, never logged, and masked out of any upstream message that echoes it back; only its last four digits are kept.
+
+**Registration hardening (section 1):** passwords are validated with Django's built-in validators (min 8 chars, common-password and all-numeric checks). Duplicate `username`, `email`, or `matric_number` attempts return one **generic** error (no account enumeration), with case-insensitive identifier checks; usernames cannot contain `@`. Privileged account fields are ignored on registration and profile updates. Login and register are rate-limited server-side at 10/min per IP — clients must handle `429` using the standard error shape.
+
+**Offline settlement (§3b):** the credited row passes the *same* rules regardless of
+origin, whether a student's gateway charge, a rep-entered offline mark, or an
+*approved* self-reported proof:
+- **Amount check:** only the exact agreed fee is ever credited; the amount always
+  comes from the contribution, never the client. A gateway mismatch fails the
+  charge into the refund review queue instead.
+- **One credit per student+fee:** the `unique_success_per_student_fee` partial
+  constraint backs this; a lost race (or an approval racing a charge) fails the
+  late row into review rather than double-crediting.
+- **Reviewed, never self-credited:** a `POST /payments/submit/` row is always
+  born `pending`; it becomes `success` only through the rep/admin
+  `POST /payments/{id}/review/` decision (stored with it in
+  `recorded_by`), or rejects cleanly without touching the ledger.
+- **Notifications:** the student is told about every decision that touches their
+  money (gateway success/failure, rep-entered manual marks, approved proofs).

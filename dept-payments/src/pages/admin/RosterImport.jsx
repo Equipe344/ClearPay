@@ -29,8 +29,10 @@ export default function RosterImport() {
     <AppShell>
       <h1>Import roster</h1>
       <p style={{ color: "var(--muted)" }}>
-        Upload a CSV of <code>matric_number, full_name, department, level</code> to bulk-add students. Students
-        already on the roster are skipped, not duplicated.
+        Upload a CSV with the header{" "}
+        <code>first_name, last_name, matric_number, level, department, email</code> (only <code>first_name</code> and{" "}
+        <code>matric_number</code> are required). Students already on the roster are skipped, not duplicated.
+        Imported students have no password — they activate their account themselves with the claim code below.
       </p>
 
       <div className="ledger-card" style={{ maxWidth: 480, padding: 24 }}>
@@ -50,16 +52,22 @@ export default function RosterImport() {
       {result && (
         <div className="ledger-card" style={{ maxWidth: 480, padding: 24, marginTop: 20 }}>
           <h3 style={{ marginTop: 0 }}>Import complete</h3>
-          <div className="tiles" style={{ marginBottom: result.errors?.length ? 20 : 0 }}>
+          <div className="tiles" style={{ marginBottom: 20 }}>
             <div className="tile">
               <div className="label">Created</div>
               <div className="value paid">{result.created}</div>
             </div>
             <div className="tile">
               <div className="label">Skipped (already existed)</div>
-              <div className="value">{result.skipped}</div>
+              <div className="value">{result.skipped_existing ?? result.skipped ?? 0}</div>
             </div>
           </div>
+          {result.claim_batch_code && (
+            <div className="banner success" style={{ marginBottom: 20 }}>
+              Claim code for these students: <strong className="ref-code">{result.claim_batch_code}</strong> — share it
+              so they can activate their accounts on the "Claim account" page.
+            </div>
+          )}
           {result.errors?.length > 0 && (
             <>
               <strong>Rows with problems</strong>
@@ -67,7 +75,10 @@ export default function RosterImport() {
                 <thead><tr><th>Row</th><th>Issue</th></tr></thead>
                 <tbody>
                   {result.errors.map((e, i) => (
-                    <tr key={i}><td>{e.row}</td><td>{e.message}</td></tr>
+                    <tr key={i}>
+                      <td>{e.row}</td>
+                      <td>{Array.isArray(e.errors) ? e.errors.join(" ") : e.message || e.errors}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

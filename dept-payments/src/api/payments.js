@@ -5,21 +5,23 @@ import { getStoredUser } from "./auth";
 /**
  * Real Django DRF endpoints:
  *
- * POST /api/payments/initiate/          { contribution_id } -> { reference, checkout_url, ... }
+ * POST /api/payments/initiate/          { contribution_id } -> { reference, checkout_url, payment }
  *   The backend decides the price — never send an amount from the browser.
  * GET  /api/payments/verify/:reference/ -> { message, payment: { status: "success"|"pending"|"failed", refund_status, ... } }
  * GET  /api/payments/history/           (owner) -> list, see shape in mockPayments below
  * GET  /api/payments/:id/receipt/       (owner) -> one payment
- * GET  /api/payments/unverified/        (admin) -> { count, results: [...] }
+ * GET  /api/payments/unverified/        (rep/admin) -> { count, results: [...] }
+ *   Amount-mismatch refund queue (read-only — decided in the Django admin).
  *
- * POST /api/payments/submit/            NOT in the documented contract.
- *   Restored for the self-reported bank transfer / POS / cash flow with a
- *   proof upload, same shape as the app's previous (pre-Paystack) payment
- *   flow. There is no confirmed real endpoint for this — confirm the path
- *   and field names with the backend before this goes live; until then it
- *   only works in mock mode. The admin-recorded offline flow in
- *   contributions.js (`markOfflinePayment`, documented, no proof needed)
- *   is separate and still works against the real API.
+ *   Self-reported bank transfer / POS / cash, with a proof upload:
+ * POST /api/payments/submit/            (student, multipart)
+ *   { contribution_id, channel: bank_transfer|pos|cash, note?, proof? }
+ *   -> 201 { message, payment } pending — credited only after review.
+ * GET  /api/payments/pending/           (rep/admin) -> { count, results: [...] }
+ * POST /api/payments/:id/review/        (rep/admin) { action: approve|reject }
+ *   Both mirrored one level down under /api/contributions/:id/payments/
+ *   (rep/admin): GET reads the same queue, POST { matric_number,
+ *   receipt_reference } books a payment offline directly.
  */
 
 let mockRefCounter = 200;
@@ -138,5 +140,26 @@ export async function getUnverifiedPayments() {
     return { count: mockUnverifiedPayments.length, results: [...mockUnverifiedPayments] };
   }
   const { data } = await apiClient.get("/payments/unverified/");
+  return data;
+}
+
+// Self-reported offline payments awaiting review (rep/admin). Distinct from the
+// refund queue above: these are pending submissions, not amount mismatches.
+export async function getPendingPayments() {
+  if (MOCK_MODE) {
+    await mockDelay();
+    return { count: 0, results: [] };
+  }
+  const { data } = await apiClient.get("/payments/pending/");
+  return data;
+}
+
+// Approve or reject a self-reported payment. action: "approve" | "reject".
+export async function reviewPayment(id, { action, note } = {}) {
+  if (MOCK_MODE) {
+    await mockDelay();
+    return { message: "Payment reviewed." };
+  }
+  const { data } = await apiClient.post(`/payments/${id}/review/`, { action, note });
   return data;
 }

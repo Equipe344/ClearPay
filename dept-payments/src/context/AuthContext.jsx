@@ -12,12 +12,11 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
-  // Activating a roster-imported account logs the student in immediately,
-  // same as login — Login.jsx and ClaimAccount.jsx share this shape.
+  // Claiming a roster account does NOT log in — the student proves ownership
+  // (matric + first name + batch code) and then logs in normally, so the claim
+  // form and the login form stay separate.
   const claim = useCallback(async (payload) => {
-    const u = await authApi.claimAccount(payload);
-    setUser(u);
-    return u;
+    return authApi.claimAccount(payload);
   }, []);
 
   const register = useCallback(async (payload) => {

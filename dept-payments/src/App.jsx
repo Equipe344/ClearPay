@@ -44,7 +44,7 @@ export default function App() {
           <Route path="/admin/contributions" element={<ProtectedRoute manageOnly><ManageContributions /></ProtectedRoute>} />
           <Route path="/admin/analytics" element={<ProtectedRoute manageOnly><Analytics /></ProtectedRoute>} />
           <Route path="/admin/roster" element={<ProtectedRoute manageOnly><RosterImport /></ProtectedRoute>} />
-          <Route path="/admin/verify" element={<ProtectedRoute adminOnly><VerifyPayments /></ProtectedRoute>} />
+          <Route path="/admin/verify" element={<ProtectedRoute manageOnly><VerifyPayments /></ProtectedRoute>} />
           <Route path="/admin/roles" element={<ProtectedRoute adminOnly><ManageRoles /></ProtectedRoute>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />

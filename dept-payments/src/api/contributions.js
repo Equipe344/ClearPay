@@ -5,21 +5,26 @@ import { buildPaymentsForContribution, buildSummaryForContribution } from "../mo
 /**
  * Real Django DRF endpoints:
  *
- * GET  /api/contributions/                -> [{ id, title, amount, deadline,
- *                                               is_mandatory, target_level, has_paid }]
- * GET  /api/contributions/:id/            -> one item
- * POST /api/contributions/                (class rep / admin) { title, description,
- *                                               amount, deadline, is_mandatory,
- *                                               target_level, department_id? }
+ * GET    /api/contributions/                -> [{ id, title, description,
+ *                                               amount, deadline,
+ *                                               is_mandatory, target_level,
+ *                                               is_closed, has_paid, created_at }]
+ * GET    /api/contributions/:id/            -> one item
+ * POST   /api/contributions/                (class rep / admin) { title,
+ *                                               description, amount, deadline,
+ *                                               is_mandatory, target_level,
+ *                                               department_id? (admin only) }
+ * PATCH  /api/contributions/:id/            (rep/admin) — edit title,
+ *                                               description, amount, deadline,
+ *                                               is_mandatory, target_level,
+ *                                               is_closed
+ * DELETE /api/contributions/:id/            (rep/admin) — CLOSE the fee
+ *                                               (reverses via PATCH
+ *                                               is_closed=false)
  *
- *   `category`, `available_sizes`, `available_colors` are NOT documented on
- *   this endpoint — they're sent for merch contributions anyway so the
- *   frontend keeps working end-to-end in mock mode. Confirm with the
- *   backend whether it accepts/stores them before relying on this for real
- *   merch runs; until then they'll likely be ignored by a real POST here.
- *
- * Edit and close don't exist on the backend (PATCH/DELETE return 405) — no
- * functions for them here; hide those actions in the UI.
+ *   `category`, `available_sizes`, `available_colors` are not stored by the
+ *   backend — they're sent for merch contributions anyway so the frontend
+ *   keeps working end-to-end (the backend silently ignores them).
  *
  * GET  /api/contributions/:id/summary/    (any) -> { total_expected, total_collected, outstanding_count }
  * GET  /api/contributions/:id/payments/   (rep/admin) -> [{ student, matric_number, status, paid_at }]
@@ -42,12 +47,38 @@ export async function createContribution(payload) {
     const item = {
       id: Math.max(...mockContributions.map((c) => c.id)) + 1,
       has_paid: false,
+      is_closed: false,
       ...payload,
     };
     mockContributions.unshift(item);
     return item;
   }
   const { data } = await apiClient.post("/contributions/", payload);
+  return data;
+}
+
+// Update a contribution (rep/admin). The backend accepts everything except
+// department moves by a rep, which stay server-side.
+export async function updateContribution(id, payload) {
+  if (MOCK_MODE) {
+    await mockDelay();
+    const idx = mockContributions.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error("Contribution not found.");
+    mockContributions[idx] = { ...mockContributions[idx], ...payload };
+    return mockContributions[idx];
+  }
+  const { data } = await apiClient.patch(`/contributions/${id}/`, payload);
+  return data;
+}
+
+// Close (or reopen) a fee. CLOSED keeps all totals and history but hides the
+// fee from students and blocks new payments. Reopen with is_closed=false.
+export async function setContributionOpen(id, isOpen) {
+  if (MOCK_MODE) {
+    await mockDelay();
+    return updateContribution(id, { is_closed: !isOpen });
+  }
+  const { data } = await apiClient.patch(`/contributions/${id}/`, { is_closed: !isOpen });
   return data;
 }
 

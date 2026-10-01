@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import AppShell from "../../components/AppShell";
-import { listContributions, createContribution } from "../../api/contributions";
+import { listContributions, createContribution, updateContribution, setContributionOpen } from "../../api/contributions";
 import { listDepartments } from "../../api/auth";
 import { useAuth } from "../../context/AuthContext";
 import { getErrorMessage } from "../../api/client";
@@ -27,12 +27,23 @@ function toEndOfDayIso(dateStr) {
   return d.toISOString();
 }
 
+// Date inputs carry a local YYYY-MM-DD; backend rows hold full ISO UTC.
+function toDateInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function ManageContributions() {
   const { user } = useAuth();
   const [contributions, setContributions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -51,8 +62,39 @@ export default function ManageContributions() {
 
   function openCreate() {
     setForm(emptyForm);
+    setEditingId(null);
     setError("");
     setShowForm(true);
+  }
+
+  // Editing a fee: PATCH. Closing a fee: DELETE-like close — the row survives,
+  // only new payments stop. Reopen with the same control.
+  function openEdit(c) {
+    setForm({
+      title: c.title || "",
+      description: c.description || "",
+      amount: c.amount || "",
+      deadline: toDateInput(c.deadline),
+      is_mandatory: !!c.is_mandatory,
+      target_level: c.target_level || "",
+      department_id: "",
+      category: c.category || "general",
+      available_sizes: (c.available_sizes || []).join(", "),
+      available_colors: (c.available_colors || []).join(", "),
+    });
+    setEditingId(c.id);
+    setError("");
+    setShowForm(true);
+  }
+
+  async function toggleClosed(c) {
+    setError("");
+    try {
+      await setContributionOpen(c.id, c.is_closed); // closed -> reopen, open -> close
+      await refresh();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
   }
 
   async function handleSubmit(e) {
@@ -76,7 +118,11 @@ export default function ManageContributions() {
       if (!user?.department_id && form.department_id) {
         payload.department_id = Number(form.department_id);
       }
-      await createContribution(payload);
+      if (editingId != null) {
+        await updateContribution(editingId, payload);
+      } else {
+        await createContribution(payload);
+      }
       setShowForm(false);
       await refresh();
     } catch (err) {
@@ -96,17 +142,26 @@ export default function ManageContributions() {
       </div>
       <p style={{ color: "var(--muted)" }}>Create dues, event fees, or merchandise runs for students to pay into.</p>
 
+      {error && !showForm && <div className="banner error">{error}</div>}
+
       <div className="ledger-card">
         {contributions.map((c) => (
           <div className="stub-row" key={c.id}>
-            <div>
-              <strong>{c.title}</strong>
+            <div style={{ flex: 1 }}>
+              <strong>{c.title}</strong>{" "}
+              {c.is_closed && <span className="status status-rejected">Closed</span>}
               <div className="ref-code">
                 ₦{Number(c.amount).toLocaleString()} · due {new Date(c.deadline).toLocaleString()} ·{" "}
                 {c.is_mandatory ? "mandatory" : "optional"}
                 {c.target_level ? ` · ${c.target_level} level` : ""}
                 {c.category === "merchandise" ? ` · merch (${(c.available_sizes || []).join("/")})` : ""}
               </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>Edit</button>
+              <button className="btn-ghost btn-sm" onClick={() => toggleClosed(c)}>
+                {c.is_closed ? "Reopen" : "Close"}
+              </button>
             </div>
           </div>
         ))}
@@ -116,7 +171,7 @@ export default function ManageContributions() {
         <div className="modal-backdrop" onClick={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>New contribution</h3>
+              <h3>{editingId != null ? "Edit contribution" : "New contribution"}</h3>
               <button onClick={() => setShowForm(false)}>×</button>
             </div>
             {error && <div className="banner error">{error}</div>}
@@ -195,7 +250,7 @@ export default function ManageContributions() {
                 <label htmlFor="mandatory" style={{ margin: 0 }}>Mandatory for all students</label>
               </div>
               <button className="btn btn-block" type="submit" disabled={saving}>
-                {saving ? "Creating…" : "Create"}
+                {saving ? "Saving…" : editingId != null ? "Save changes" : "Create"}
               </button>
             </form>
           </div>

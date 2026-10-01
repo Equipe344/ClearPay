@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getErrorMessage } from "../api/client";
 
 // For a student whose matric number was added via roster import but who
-// has never logged in — they set a username + password here to activate
-// the account the rep/admin already created a roster row for.
+// has never logged in — they activate the account the rep/admin already
+// created, using the claim code the rep shared. No username is chosen: the
+// backend owns the username (it equals the matric number).
 export default function ClaimAccount() {
-  const [form, setForm] = useState({ matric_number: "", username: "", password: "" });
+  const [form, setForm] = useState({ matric_number: "", first_name: "", batch_code: "", password: "" });
   const [error, setError] = useState("");
+  const [done, setDone] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
   const { claim } = useAuth();
 
   async function handleSubmit(e) {
@@ -18,8 +19,8 @@ export default function ClaimAccount() {
     setError("");
     setLoading(true);
     try {
-      const user = await claim(form);
-      navigate(user.role === "admin" || user.role === "class_rep" ? "/admin" : "/dashboard");
+      await claim(form);
+      setDone("Account activated. Log in with your matric number and the password you just set.");
     } catch (err) {
       setError(getErrorMessage(err) || err.message || "Couldn't claim that account.");
     } finally {
@@ -42,6 +43,7 @@ export default function ClaimAccount() {
             </p>
 
             {error && <div className="banner error">{error}</div>}
+            {done && <div className="banner success">{done} <Link to="/login">Go to login</Link>.</div>}
 
             <div className="field">
               <label>Matric number</label>
@@ -53,8 +55,22 @@ export default function ClaimAccount() {
               />
             </div>
             <div className="field">
-              <label>Choose a username</label>
-              <input required value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+              <label>First name (as it is on the roster)</label>
+              <input
+                required
+                value={form.first_name}
+                onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                placeholder="Amina"
+              />
+            </div>
+            <div className="field">
+              <label>Claim code (from your class rep)</label>
+              <input
+                required
+                value={form.batch_code}
+                onChange={(e) => setForm({ ...form, batch_code: e.target.value })}
+                placeholder="Shared by your rep"
+              />
             </div>
             <div className="field">
               <label>Choose a password</label>

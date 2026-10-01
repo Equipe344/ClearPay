@@ -15,13 +15,13 @@ const manageLinks = [
   { to: "/admin/contributions", label: "Contributions" },
   { to: "/admin/analytics", label: "Analytics" },
   { to: "/admin/roster", label: "Import roster" },
+  { to: "/admin/verify", label: "Verify payments" },
 ];
 
-// The refund review page and role management are admin-only, so they're
-// only in the nav for admins — class reps don't see them.
+// Role management is admin-only, so it's only in the nav for admins — class
+// reps don't see it.
 const adminOnlyLinks = [
-  { to: "/admin/verify", label: "Payments needing review" },
-  { to: "/admin/roles", label: "Manage roles" },
+  { to: "/admin/roles", label: "Manage users" },
 ];
 
 export default function AppShell({ children }) {

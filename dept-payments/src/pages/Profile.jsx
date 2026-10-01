@@ -9,13 +9,9 @@ export default function Profile() {
   const { user, updateProfile } = useAuth();
   const [phone, setPhone] = useState(user?.phone_number || "");
   const [level, setLevel] = useState(user?.level || "");
-  const [email, setEmail] = useState(user?.email || "");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  // Email is only editable once, when the account currently has none.
-  const canSetEmail = !user?.email;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -25,7 +21,6 @@ export default function Profile() {
     try {
       const payload = { phone_number: phone };
       if (user?.level) payload.level = level;
-      if (canSetEmail && email) payload.email = email;
       await updateProfile(payload);
       setSuccess(true);
     } catch (err) {
@@ -58,17 +53,10 @@ export default function Profile() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          {canSetEmail ? (
-            <div className="field">
-              <label>Email (can only be set once)</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@student.edu.ng" />
-            </div>
-          ) : (
-            <div className="field">
-              <label>Email</label>
-              <input value={user.email} disabled />
-            </div>
-          )}
+          <div className="field">
+            <label>Email (read-only)</label>
+            <input value={user?.email || ""} disabled />
+          </div>
 
           <div className="field">
             <label>Phone number</label>

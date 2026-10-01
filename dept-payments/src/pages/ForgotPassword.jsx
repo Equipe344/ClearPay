@@ -1,41 +1,28 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { requestResetCode, resetPassword } from "../api/auth";
-import { getErrorMessage, MOCK_MODE } from "../api/client";
+import { resetPassword } from "../api/auth";
+import { getErrorMessage } from "../api/client";
 
+// Assisted reset: a class rep / admin issues a one-time code (see Manage roles),
+// the student redeems it here. There is deliberately no public "email me a
+// code" endpoint — the backend has no mail dependency and never hands a reset
+// code to an unauthenticated caller for an account.
 export default function ForgotPassword() {
-  const [step, setStep] = useState("request"); // "request" | "reset" | "done"
-  const [identifier, setIdentifier] = useState("");
+  const [matric, setMatric] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
+  const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-
-  async function handleRequestCode(e) {
-    e.preventDefault();
-    setError("");
-    setInfo("");
-    setLoading(true);
-    try {
-      const res = await requestResetCode(identifier);
-      setInfo(res?.message || "If that account exists, a reset code has been sent.");
-      setStep("reset");
-    } catch (err) {
-      setError(getErrorMessage(err) || err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleReset(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      await resetPassword({ identifier, code, new_password: newPassword });
-      setStep("done");
+      await resetPassword({ matric_number: matric, code, new_password: newPassword });
+      setDone(true);
     } catch (err) {
       setError(getErrorMessage(err) || err.message);
     } finally {
@@ -51,29 +38,23 @@ export default function ForgotPassword() {
       </div>
       <div className="auth-body">
         <div className="auth-form-wrap" style={{ margin: "0 auto" }}>
-          <form className="auth-form" onSubmit={step === "request" ? handleRequestCode : handleReset}>
+          <form className="auth-form" onSubmit={handleReset}>
             <h1>Reset your password</h1>
             <p className="sub">
-              {step === "request" && "Enter your matric number, email, or username."}
-              {step === "reset" && "Enter the code you received and a new password."}
-              {step === "done" && "Your password has been reset."}
+              Ask your class rep or department admin for a reset code, then set a new password here.
             </p>
 
             {error && <div className="banner error">{error}</div>}
-            {info && step === "reset" && <div className="banner success">{info}</div>}
 
-            {step === "request" && (
-              <div className="field">
-                <label>Matric number, email, or username</label>
-                <input required value={identifier} onChange={(e) => setIdentifier(e.target.value)} />
-              </div>
-            )}
-
-            {step === "reset" && (
+            {!done && (
               <>
                 <div className="field">
+                  <label>Matric number</label>
+                  <input required value={matric} onChange={(e) => setMatric(e.target.value)} placeholder="CSC/2021/041" />
+                </div>
+                <div className="field">
                   <label>Reset code</label>
-                  <input required value={code} onChange={(e) => setCode(e.target.value)} placeholder={MOCK_MODE ? "123456" : "6-digit code"} />
+                  <input required value={code} onChange={(e) => setCode(e.target.value)} placeholder="Issued by your rep" />
                 </div>
                 <div className="field">
                   <label>New password</label>
@@ -85,19 +66,19 @@ export default function ForgotPassword() {
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
                 </div>
+                <button className="btn btn-block" type="submit" disabled={loading}>
+                  {loading ? "Please wait…" : "Reset password →"}
+                </button>
               </>
             )}
 
-            {step !== "done" && (
-              <button className="btn btn-block" type="submit" disabled={loading}>
-                {loading ? "Please wait…" : step === "request" ? "Send reset code →" : "Reset password →"}
-              </button>
-            )}
-
-            {step === "done" && (
-              <button className="btn btn-block" type="button" onClick={() => navigate("/login")}>
-                Back to login
-              </button>
+            {done && (
+              <>
+                <div className="banner success">Your password has been reset.</div>
+                <button className="btn btn-block" type="button" onClick={() => navigate("/login")}>
+                  Back to login
+                </button>
+              </>
             )}
 
             <p className="sub" style={{ marginTop: 16 }}>

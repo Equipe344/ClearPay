@@ -51,6 +51,14 @@ services:
         sync: false                  # optional; blank leaves the email NULL
       - key: ADMIN_PASSWORD
         sync: false                  # set once; required for the first seed
+      # Optional but recommended: on the first deploy this department is created
+      # (if missing) and assigned to the admin, so fee creation, student
+      # registration and roster imports all work with no manual Docker/admin
+      # step. Change the value if your department is named differently.
+      - key: ADMIN_DEPARTMENT
+        value: Computer Science
+      - key: ADMIN_FACULTY
+        value: Physical Sciences
       # --- BMONI embedded banking (optional) -------------------------------
       # Leaving BMONI_API_KEY blank keeps the feature switched OFF: the
       # per-department bank-account endpoints answer 503 rather than inventing

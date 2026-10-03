@@ -22,6 +22,7 @@ const manageLinks = [
 // reps don't see it.
 const adminOnlyLinks = [
   { to: "/admin/roles", label: "Manage users" },
+  { to: "/admin/departments", label: "Departments" },
 ];
 
 export default function AppShell({ children }) {

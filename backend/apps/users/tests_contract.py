@@ -122,9 +122,12 @@ class AuthContractTests(APITestCase):
         self.assertEqual(
             set(response.data.keys()),
             {'id', 'username', 'email', 'matric_number', 'department',
-             'level', 'role', 'phone_number', 'full_name'},
+             'department_id', 'level', 'role', 'phone_number', 'full_name'},
         )
         self.assertEqual(response.data['department'], 'Computer Science')
+        # Additive: the id now travels with the name so the UI can tell whether
+        # the caller actually belongs to a department.
+        self.assertIsNotNone(response.data['department_id'])
 
     def test_me_patch_updates_editable_fields_only(self):
         self._token_auth()

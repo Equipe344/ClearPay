@@ -82,7 +82,7 @@ class AuthLifecycleIntegrationTests(APITestCase):
             set(me_response.data.keys()),
             {
                 'id', 'username', 'email', 'matric_number', 'department',
-                'full_name', 'level', 'role', 'phone_number',
+                'department_id', 'full_name', 'level', 'role', 'phone_number',
             },
         )
         self.assertEqual(me_response.data['email'], 'FRONTEND.STUDENT@example.com')

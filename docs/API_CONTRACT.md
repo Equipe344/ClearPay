@@ -75,7 +75,7 @@ Frontend stores the token and sends it as `Authorization: Token <token>` on ever
 ```json
 // Response  200
 { "id": 12, "username": "jdoe", "email": "jdoe@school.edu.ng", "matric_number": "CSC/2021/045",
-  "department": "Computer Science", "full_name": "John Doe", "level": "400",
+  "department": "Computer Science", "department_id": 3, "full_name": "John Doe", "level": "400",
   "role": "student", "phone_number": "" }
 ```
 `full_name` is read-only. It joins trimmed first and last names; when both are
@@ -196,9 +196,18 @@ role.
 
 ## 2. Departments
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/departments/` | List all departments (for signup dropdown) |
+| Method | Endpoint | Who | Purpose |
+|---|---|---|---|
+| GET | `/departments/` | public | List all departments (for signup dropdown) |
+| POST | `/departments/` | admin | **Create a department** — `{name, faculty}`; name is unique case-insensitively, faculty required |
+
+Departments are the parent of every contribution and roster row. They used to be
+creatable **only** in the Django admin, so a fresh deploy had none — which
+blocked fee creation (`System admins must specify a department_id…`), blocked
+student registration (required `department_id`), and made roster imports fail on
+`unknown department: X`. `POST` closes that gap from inside the app; the
+`seed_admin` management command can also create one at deploy time via the
+`ADMIN_DEPARTMENT` / `ADMIN_FACULTY` env vars.
 
 ---
 

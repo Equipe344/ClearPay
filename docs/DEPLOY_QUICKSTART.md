@@ -33,7 +33,10 @@ friendly. Do the phases in order.
    `pip install … && collectstatic && migrate && seed_admin`.
    `seed_admin` creates your first admin (with `role=admin`) from the
    `ADMIN_*` values — this is how you get an admin without a shell, since free
-   Render web services have **no Shell/SSH**. It is idempotent and never rewrites
+   Render web services have **no Shell/SSH**. It **also creates the department**
+   named by `ADMIN_DEPARTMENT` (`Computer Science` by default) and assigns the
+   admin to it, so the very first deploy can create fees, register students, and
+   import a roster with **no manual setup**. It is idempotent and never rewrites
    an existing user's password, so it is safe on every redeploy.
 4. Check `https://<service>.onrender.com/api/health/` returns OK.
 5. Log into `https://<service>.onrender.com/admin/` with your admin to confirm.
@@ -77,6 +80,17 @@ friendly. Do the phases in order.
    backend now sends), which verifies and shows the receipt.
 
 ---
+
+## Managing departments
+
+Departments are the parent of every contribution and every roster row. A fresh
+deploy gets one automatically (from `ADMIN_DEPARTMENT`), but you can add more
+from inside the app:
+
+- **Admin → Departments** (`/admin/departments`) → **+ New department**.
+- The same list feeds the student signup dropdown. With **zero** departments the
+  login page now disables registration with a clear message instead of bouncing
+  off a confusing `400`.
 
 ## Deploy-day gotchas
 

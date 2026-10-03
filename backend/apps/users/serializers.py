@@ -10,6 +10,23 @@ class DepartmentSerializer(serializers.ModelSerializer):
         model = Department
         fields = ['id', 'name', 'faculty']
 
+    def validate_name(self, value):
+        # The model's unique constraint is case-sensitive, so "Computer Science"
+        # and "computer science" would both be accepted — and then a roster CSV
+        # naming one of them would silently match the wrong row. Enforce
+        # case-insensitive uniqueness at the API boundary instead.
+        value = (value or '').strip()
+        if not value:
+            raise serializers.ValidationError('Name is required.')
+        existing = Department.objects.filter(name__iexact=value)
+        if self.instance is not None:
+            existing = existing.exclude(pk=self.instance.pk)
+        if existing.exists():
+            raise serializers.ValidationError(
+                'A department with this name already exists.'
+            )
+        return value
+
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     # These three are declared EXPLICITLY (not left to ModelSerializer
@@ -145,10 +162,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
     # able to supply it. It can be filled in ONCE, then it is locked: letting
     # a student change department freely would also let them switch out of a
     # department that is collecting dues from them (an escape route).
+    # Read AND write. As write-only it was invisible on GET /auth/me/, so the
+    # frontend could never tell whether the logged-in admin actually had a
+    # department (it had to guess from the `department` name). Returning the id
+    # alongside the name lets the UI decide truthfully whether to show the
+    # "pick a department" selector.
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
         source='department',
-        write_only=True,
         required=False,
     )
 

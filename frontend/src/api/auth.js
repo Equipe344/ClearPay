@@ -30,6 +30,21 @@ export async function listDepartments() {
   return data;
 }
 
+// POST /api/departments/  (admin) — create a department. The GET above is
+// public (signup/registration dropdowns), but creating one is admin-only.
+// Departments were previously creatable only in the Django admin, so a fresh
+// deploy had none and both registration and fee creation were blocked.
+export async function createDepartment({ name, faculty }) {
+  if (MOCK_MODE) {
+    await mockDelay();
+    const dept = { id: mockDepartments.length + 1, name, faculty };
+    mockDepartments.push(dept);
+    return dept;
+  }
+  const { data } = await apiClient.post("/departments/", { name, faculty });
+  return data;
+}
+
 // The backend login resolves its lookup by WHICH key is present: `email`,
 // `matric_number`, or `username`. Route the single login box to the right key
 // so a student can type any of the three. A matric number contains "/"

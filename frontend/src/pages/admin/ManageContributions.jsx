@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import AppShell from "../../components/AppShell";
 import { listContributions, createContribution, updateContribution, setContributionOpen } from "../../api/contributions";
 import { listDepartments } from "../../api/auth";
@@ -39,6 +40,12 @@ function toDateInput(iso) {
 
 export default function ManageContributions() {
   const { user } = useAuth();
+  // A system admin with no department must pick one when creating a fee; a
+  // class rep's own department is applied server-side. `department` (the name)
+  // is the field /auth/me/ reliably returns, so it's what we branch on — the
+  // old `department_id` check was always true because that field used to be
+  // write-only and never appeared in the response.
+  const adminHasNoDept = !user?.department;
   const [contributions, setContributions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,9 +62,10 @@ export default function ManageContributions() {
 
   useEffect(() => {
     refresh();
-    // An admin with no department needs to pick one; a class rep's own
-    // department is implicit and doesn't need this dropdown.
-    if (!user?.department_id) listDepartments().then(setDepartments);
+    // Only a system admin without a department needs the selector; a class
+    // rep's own department is implicit and applied server-side.
+    if (adminHasNoDept) listDepartments().then(setDepartments);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   function openCreate() {
@@ -115,7 +123,7 @@ export default function ManageContributions() {
         payload.available_sizes = form.available_sizes.split(",").map((s) => s.trim()).filter(Boolean);
         payload.available_colors = form.available_colors.split(",").map((c) => c.trim()).filter(Boolean);
       }
-      if (!user?.department_id && form.department_id) {
+      if (adminHasNoDept && form.department_id) {
         payload.department_id = Number(form.department_id);
       }
       if (editingId != null) {
@@ -143,6 +151,13 @@ export default function ManageContributions() {
       <p style={{ color: "var(--muted)" }}>Create dues, event fees, or merchandise runs for students to pay into.</p>
 
       {error && !showForm && <div className="banner error">{error}</div>}
+
+      {adminHasNoDept && departments.length === 0 && (
+        <div className="banner info">
+          No departments exist yet, so contributions can't be created.{" "}
+          <Link to="/admin/departments"><strong>Create a department →</strong></Link>
+        </div>
+      )}
 
       <div className="ledger-card">
         {contributions.map((c) => (
@@ -228,15 +243,26 @@ export default function ManageContributions() {
                   </div>
                 </>
               )}
-              {!user?.department_id && (
+              {adminHasNoDept && (
                 <div className="field">
                   <label>Department</label>
-                  <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
-                    <option value="">Select…</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
+                  {departments.length === 0 ? (
+                    <div className="banner info" style={{ margin: 0 }}>
+                      No departments yet.{" "}
+                      <Link to="/admin/departments"><strong>Create one →</strong></Link>
+                    </div>
+                  ) : (
+                    <select
+                      required
+                      value={form.department_id}
+                      onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+                    >
+                      <option value="">Select…</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               )}
               <div className="field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -249,7 +275,11 @@ export default function ManageContributions() {
                 />
                 <label htmlFor="mandatory" style={{ margin: 0 }}>Mandatory for all students</label>
               </div>
-              <button className="btn btn-block" type="submit" disabled={saving}>
+              <button
+                className="btn btn-block"
+                type="submit"
+                disabled={saving || (adminHasNoDept && departments.length === 0)}
+              >
                 {saving ? "Saving…" : editingId != null ? "Save changes" : "Create"}
               </button>
             </form>

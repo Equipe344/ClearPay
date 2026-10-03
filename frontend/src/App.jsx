@@ -16,6 +16,7 @@ import StudentDetail from "./pages/admin/StudentDetail";
 import Analytics from "./pages/admin/Analytics";
 import RosterImport from "./pages/admin/RosterImport";
 import ManageRoles from "./pages/admin/ManageRoles";
+import Departments from "./pages/admin/Departments";
 
 function RootRedirect() {
   const { user, canManage } = useAuth();
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="/admin/roster" element={<ProtectedRoute manageOnly><RosterImport /></ProtectedRoute>} />
           <Route path="/admin/verify" element={<ProtectedRoute manageOnly><VerifyPayments /></ProtectedRoute>} />
           <Route path="/admin/roles" element={<ProtectedRoute adminOnly><ManageRoles /></ProtectedRoute>} />
+          <Route path="/admin/departments" element={<ProtectedRoute adminOnly><Departments /></ProtectedRoute>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

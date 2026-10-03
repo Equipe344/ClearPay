@@ -78,10 +78,21 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
-class DepartmentListView(generics.ListAPIView):
+class DepartmentListView(generics.ListCreateAPIView):
+    """GET is public (signup/registration dropdowns need it without a token);
+    POST is admin-only. Departments used to be creatable only in the Django
+    admin, so a fresh deploy had none — which blocked fee creation, blocked
+    student registration, and made roster imports fail. This closes that gap
+    from inside the app.
+    """
+
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    permission_classes = [AllowAny]
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAdminUser()]
+        return [AllowAny()]
 
 
 def _new_code(length=10):

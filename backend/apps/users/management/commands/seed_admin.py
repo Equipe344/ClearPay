@@ -29,7 +29,7 @@ from decouple import config
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.users.models import User
+from apps.users.models import Department, User
 
 
 class Command(BaseCommand):
@@ -79,6 +79,28 @@ class Command(BaseCommand):
             changed.append('role')
         if changed:
             user.save(update_fields=changed)
+
+        # Optional: create/assign a department so a fresh deploy is usable with
+        # zero manual steps. Without one, an admin cannot create a fee
+        # ("System admins must specify a department_id...") and a student sees
+        # no fees at all — so seeding it here is what makes the very first
+        # build work end to end. Idempotent: an existing department is reused.
+        department_name = config('ADMIN_DEPARTMENT', default='').strip()
+        if department_name:
+            department = Department.objects.filter(
+                name__iexact=department_name
+            ).first()
+            if department is None:
+                faculty = (
+                    config('ADMIN_FACULTY', default='').strip()
+                    or department_name
+                )
+                department = Department.objects.create(
+                    name=department_name, faculty=faculty
+                )
+            if user.department_id is None:
+                user.department = department
+                user.save(update_fields=['department'])
 
         action = 'created' if created else 'repaired'
         self.stdout.write(

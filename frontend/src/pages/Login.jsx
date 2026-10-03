@@ -53,6 +53,7 @@ function usernameFromMatric(matric) {
 export default function Login() {
   const [mode, setMode] = useState("login");
   const [departments, setDepartments] = useState([]);
+  const [departmentsLoaded, setDepartmentsLoaded] = useState(false);
   const [form, setForm] = useState({
     identifier: "",
     password: "",
@@ -74,8 +75,14 @@ export default function Login() {
     listDepartments().then((rows) => {
       setDepartments(rows);
       setForm((f) => (f.department_id ? f : { ...f, department_id: rows[0]?.id ?? "" }));
+      setDepartmentsLoaded(true);
     });
   }, []);
+
+  // Registering requires a department (the backend's department_id is a
+  // required PK field). With zero departments the old code sent Number("") ->
+  // NaN and surfaced a confusing 400 — block it with a clear message instead.
+  const noDepartments = departmentsLoaded && departments.length === 0;
 
   function update(field, value) {
     setForm((f) => {
@@ -97,6 +104,10 @@ export default function Login() {
         const user = await login(form.identifier, form.password);
         navigate(user.role === "admin" || user.role === "class_rep" ? "/admin" : "/dashboard");
       } else {
+        if (noDepartments) {
+          setError("No departments are set up yet. Ask an administrator to create one.");
+          return;
+        }
         await register({
           username: form.username,
           email: form.email,
@@ -223,11 +234,18 @@ export default function Login() {
                 </div>
                 <div className="field">
                   <label>Department</label>
-                  <select value={form.department_id} onChange={(e) => update("department_id", e.target.value)}>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
+                  {noDepartments ? (
+                    <div className="banner info" style={{ margin: 0 }}>
+                      No departments are set up yet, so registration is disabled.
+                      Ask your class rep or an administrator to create one.
+                    </div>
+                  ) : (
+                    <select value={form.department_id} onChange={(e) => update("department_id", e.target.value)}>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div className="field">
                   <label>Level</label>
@@ -277,7 +295,11 @@ export default function Login() {
               )}
             </div>
 
-            <button className="btn btn-block" type="submit" disabled={loading}>
+            <button
+              className="btn btn-block"
+              type="submit"
+              disabled={loading || (mode === "register" && noDepartments)}
+            >
               {loading ? "Please wait…" : mode === "login" ? "Log in →" : "Create account →"}
             </button>
 

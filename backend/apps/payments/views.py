@@ -180,6 +180,11 @@ class InitializePaymentView(APIView):
         data = {
             'email': request.user.email,
             'amount': amount_in_kobo,
+            # Return the student to the SPA after checkout so /payment/callback
+            # can verify the reference and show the receipt. Without this,
+            # Paystack shows its own success page and the auto-verify UX is
+            # skipped (the webhook still settles the money server-side).
+            'callback_url': f'{settings.FRONTEND_URL}/payment/callback',
         }
 
         try:

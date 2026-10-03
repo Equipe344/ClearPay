@@ -43,6 +43,13 @@ AUTH_USER_MODEL = 'users.User'
 PAYSTACK_SECRET_KEY = config('PAYSTACK_SECRET_KEY')
 PAYSTACK_PUBLIC_KEY = config('PAYSTACK_PUBLIC_KEY', default='')
 
+# Public origin of the React SPA. The backend uses it to build the Paystack
+# `callback_url`, so a student is returned to the frontend's /payment/callback
+# page after checkout (that page then calls /payments/verify/). Local default is
+# the Vite dev server; set it to the deployed frontend origin in production.
+# Trailing slash is stripped so f'{FRONTEND_URL}/payment/callback' is always clean.
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173').rstrip('/')
+
 # BMONI Embedded — the department's own NGN virtual bank account.
 # Optional feature, so unlike PAYSTACK_SECRET_KEY the key is NOT required to
 # boot: the app serves the Paystack flows fine without it. An empty key leaves

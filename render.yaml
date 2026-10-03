@@ -11,7 +11,7 @@ services:
     # available there). migrate is idempotent, so re-running it on every
     # build is safe. On a paid plan this can move back to preDeployCommand
     # so the schema applies strictly before the new version serves traffic.
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py seed_admin
     startCommand: gunicorn core.wsgi:application --bind 0.0.0.0:$PORT --workers 2
     healthCheckPath: /api/health/
     envVars:
@@ -35,6 +35,22 @@ services:
         sync: false                  # set in the dashboard; also the webhook HMAC key
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
+      # Deployed SPA origin — the backend builds the Paystack `callback_url`
+      # from it so students land back on /payment/callback after paying.
+      # Set to the Vercel URL, e.g. https://your-app.vercel.app (no slash).
+      - key: FRONTEND_URL
+        sync: false
+      # --- First-admin bootstrap (free web services have no shell) ---------
+      # The build runs `python manage.py seed_admin`, which creates (or
+      # repairs) one admin from these values. Set ADMIN_PASSWORD before the
+      # first deploy. The command is idempotent and never rewrites an existing
+      # user's password, so it is safe to leave wired into every build.
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_EMAIL
+        sync: false                  # optional; blank leaves the email NULL
+      - key: ADMIN_PASSWORD
+        sync: false                  # set once; required for the first seed
       # --- BMONI embedded banking (optional) -------------------------------
       # Leaving BMONI_API_KEY blank keeps the feature switched OFF: the
       # per-department bank-account endpoints answer 503 rather than inventing

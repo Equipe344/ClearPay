@@ -88,3 +88,24 @@ friendly. Do the phases in order.
 | First request slow (~50s) | Free Render sleeps after ~15 min idle — ping `/api/health/` before the demo |
 | Payment 502 `gateway_unavailable` | Paystack keys missing/invalid in Render env |
 | Data gone after ~30 days | Free Postgres expires — upgrade to `basic-256mb` before then |
+
+---
+
+## Known limitations (by design / infrastructure)
+
+These are not bugs — know them before the demo:
+
+- **Uploaded proof files are ephemeral in production.** Offline payment proofs
+  (`POST /payments/submit/`) are written to the container's local disk. On Render
+  that disk is wiped on every deploy/restart, so **upload a proof and review it in
+  the same session**. For anything long-lived, front the uploads with S3-compatible
+  object storage (`django-storages` + `boto3`) — a post-hackathon change, since it
+  adds a dependency the project deliberately avoids today.
+- **Free Postgres has no backups and is deleted ~30 days after creation.** Upgrade
+  the `dpt-postgres` instance to `basic-256mb` before then if it must outlive the
+  hackathon.
+- **Free web services sleep after ~15 min idle** (~50s cold start). Warm
+  `/api/health/` right before you present so the wake-up doesn't eat your slot.
+- **Refunds are never automatic.** Any amount mismatch is flagged
+  `refund_status=pending_review` and a human decides in the Django admin. This is
+  deliberate (financial/legal safety), not an omission.

@@ -224,6 +224,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .status-rejected { background: var(--rejected-bg); color: var(--rejected); border-color: var(--rejected); }
 
 /* ---------- App shell ---------- */
+/* ---------- App shell ---------- */
 .app-shell {
   display: grid;
   grid-template-columns: 220px 1fr;
@@ -236,6 +237,12 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.main-area {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 32px 40px 60px;
 }
 .sidebar .brand {
   font-family: var(--font-display);

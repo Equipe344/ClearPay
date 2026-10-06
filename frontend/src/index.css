@@ -280,7 +280,8 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 
 .main-area {
   padding: 32px 40px 60px;
-  max-width: 980px;
+  width: 100%;
+  max-width: none;
 }
 
 .topline {

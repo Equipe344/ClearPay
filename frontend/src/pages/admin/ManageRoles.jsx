@@ -57,7 +57,9 @@ export default function ManageRoles() {
   return (
     <AppShell>
       <h1>Manage users</h1>
-      <p style={{ color: "var(--muted)" }}>Promote a class rep, or issue a password-reset code for a student.</p>
+      <p style={{ color: "var(--muted)" }}>
+        Promote a class rep (a rep only manages their own department and level), or issue a password-reset code for a student.
+      </p>
 
       <div className="ledger-card" style={{ maxWidth: 460, padding: 24, marginBottom: 20 }}>
         <h3 style={{ marginTop: 0 }}>Change a role</h3>
@@ -65,7 +67,18 @@ export default function ManageRoles() {
         {result && (
           <div className="banner success">
             {result.full_name || result.username || "User"} is now{" "}
-            <strong style={{ textTransform: "capitalize" }}>{(result.role || "").replace("_", " ")}</strong>.
+            <strong style={{ textTransform: "capitalize" }}>{(result.role || "").replace("_", " ")}</strong>
+            {(result.department || result.level) && (
+              <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem" }}>
+                {result.department || "No department"}{result.level ? ` · ${result.level} level` : ""}
+              </span>
+            )}
+            {result.role === "class_rep" && (
+              <span style={{ display: "block", marginTop: 4, fontSize: "0.85rem" }}>
+                Scope: they will only see and manage {result.department || "their department"}
+                {result.level ? ` · ${result.level} level` : ""} fees.
+              </span>
+            )}
           </div>
         )}
         <form onSubmit={handleSubmit}>

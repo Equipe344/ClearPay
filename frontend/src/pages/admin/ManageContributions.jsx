@@ -39,13 +39,20 @@ function toDateInput(iso) {
 }
 
 export default function ManageContributions() {
-  const { user } = useAuth();
-  // A system admin with no department must pick one when creating a fee; a
-  // class rep's own department is applied server-side. `department` (the name)
-  // is the field /auth/me/ reliably returns, so it's what we branch on — the
-  // old `department_id` check was always true because that field used to be
-  // write-only and never appeared in the response.
-  const adminHasNoDept = !user?.department;
+  const { user, isAdmin, isRep } = useAuth();
+  // A system admin may assign a fee to ANY department (the API contract lets
+  // admins target another department), so the picker always shows for admins,
+  // defaulting to the admin's own department. A class rep's department and
+  // level are applied server-side, and the picker stays hidden for them. We
+  // branch on `department_id` (the numeric id /auth/me/ returns) — not the
+  // old write-only `department` name.
+  const showDeptPicker = isAdmin;
+  // A rep is scoped to their own department AND level: the form defaults the
+  // target level to theirs, and general (blank) fees stay available to all.
+  const repScopeHint =
+    isRep && user?.department
+      ? `${user.department}${user?.level ? ` · ${user.level} level` : ""}`
+      : "";
   const [contributions, setContributions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -64,12 +71,19 @@ export default function ManageContributions() {
     refresh();
     // Only a system admin without a department needs the selector; a class
     // rep's own department is implicit and applied server-side.
-    if (adminHasNoDept) listDepartments().then(setDepartments);
+    if (showDeptPicker) listDepartments().then(setDepartments);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   function openCreate() {
-    setForm(emptyForm);
+    // Reps default to their own level (they can still pick "Everyone" for a
+    // general fee); admins start blank.
+    setForm({
+      ...emptyForm,
+      target_level: isRep && user?.level ? user.level : "",
+      // Admins get the department picker pre-set to their own department.
+      department_id: isAdmin ? String(user?.department_id ?? "") : "",
+    });
     setEditingId(null);
     setError("");
     setShowForm(true);
@@ -123,7 +137,7 @@ export default function ManageContributions() {
         payload.available_sizes = form.available_sizes.split(",").map((s) => s.trim()).filter(Boolean);
         payload.available_colors = form.available_colors.split(",").map((c) => c.trim()).filter(Boolean);
       }
-      if (adminHasNoDept && form.department_id) {
+      if (showDeptPicker && form.department_id) {
         payload.department_id = Number(form.department_id);
       }
       if (editingId != null) {
@@ -152,7 +166,7 @@ export default function ManageContributions() {
 
       {error && !showForm && <div className="banner error">{error}</div>}
 
-      {adminHasNoDept && departments.length === 0 && (
+      {isAdmin && departments.length === 0 && (
         <div className="banner info">
           No departments exist yet, so contributions can't be created.{" "}
           <Link to="/admin/departments"><strong>Create a department →</strong></Link>
@@ -166,9 +180,10 @@ export default function ManageContributions() {
               <strong>{c.title}</strong>{" "}
               {c.is_closed && <span className="status status-rejected">Closed</span>}
               <div className="ref-code">
-                ₦{Number(c.amount).toLocaleString()} · due {new Date(c.deadline).toLocaleString()} ·{" "}
+                {(c.department || (c.department_id ? `Dept #${c.department_id}` : "No department"))}
+                {" · "}₦{Number(c.amount).toLocaleString()} · due {new Date(c.deadline).toLocaleString()} ·{" "}
                 {c.is_mandatory ? "mandatory" : "optional"}
-                {c.target_level ? ` · ${c.target_level} level` : ""}
+                {c.target_level ? ` · ${c.target_level} level` : " · all levels"}
                 {c.category === "merchandise" ? ` · merch (${(c.available_sizes || []).join("/")})` : ""}
               </div>
             </div>
@@ -190,6 +205,12 @@ export default function ManageContributions() {
               <button onClick={() => setShowForm(false)}>×</button>
             </div>
             {error && <div className="banner error">{error}</div>}
+
+      {repScopeHint && (
+        <div className="banner info">
+          You manage <strong>{repScopeHint}</strong> — fees you create land there, and other levels are hidden from this list.
+        </div>
+      )}
             <form onSubmit={handleSubmit}>
               <div className="field">
                 <label>Title</label>
@@ -243,7 +264,7 @@ export default function ManageContributions() {
                   </div>
                 </>
               )}
-              {adminHasNoDept && (
+              {isAdmin && (
                 <div className="field">
                   <label>Department</label>
                   {departments.length === 0 ? (
@@ -278,7 +299,7 @@ export default function ManageContributions() {
               <button
                 className="btn btn-block"
                 type="submit"
-                disabled={saving || (adminHasNoDept && departments.length === 0)}
+                disabled={saving || (isAdmin && departments.length === 0)}
               >
                 {saving ? "Saving…" : editingId != null ? "Save changes" : "Create"}
               </button>

@@ -23,8 +23,10 @@ class ContributionTests(APITestCase):
         self.level100 = self._u('level100', 'level100@school.edu.ng', 'CSC/2021/002', self.dept, '100')
         self.other_student = self._u('lawstudent', 'law@school.edu.ng', 'LAW/2021/001', self.other_dept, '100')
         self.rep = self._u('rep', 'rep@school.edu.ng', 'CSC/2021/003', self.dept, '500', User.ROLE_CLASS_REP)
-        self.admin = self._u('admin', 'admin@school.edu.ng', 'CSC/2021/004', self.dept, '500', User.ROLE_ADMIN)
-        self.rep_no_dept = self._u('repnoded', 'repnodept@school.edu.ng', 'CSC/2021/005', None, '500', User.ROLE_CLASS_REP)
+        # A level-matched rep, so level-targeted fees have a legitimate manager.
+        self.level100_rep = self._u('level100rep', 'level100rep@school.edu.ng', 'CSC/2021/004', self.dept, '100', User.ROLE_CLASS_REP)
+        self.admin = self._u('admin', 'admin@school.edu.ng', 'CSC/2021/005', self.dept, '500', User.ROLE_ADMIN)
+        self.rep_no_dept = self._u('repnoded', 'repnodept@school.edu.ng', 'CSC/2021/006', None, '500', User.ROLE_CLASS_REP)
         self.contribution = self._c('Departmental Shirt 2026', '3500.00', 30, None)
         self.expired = self._c('Expired Dues', '1000.00', -1, None)
         self.level100_only = self._c('Level 100 Orientation', '2000.00', 10, '100')
@@ -89,8 +91,9 @@ class ContributionTests(APITestCase):
 
     def test_mark_paid_rejects_student_outside_the_target_level(self):
         # A level-targeted fee must not be markable for the wrong level; the
-        # bogus success row would inflate collected totals.
-        self._auth(self.rep)
+        # bogus success row would inflate collected totals. The acting rep
+        # IS this fee's level (100), but the student is 400 — level reject.
+        self._auth(self.level100_rep)
         r = self.client.post(
             reverse('contribution-payments', args=[self.level100_only.pk]),
             {'matric_number': self.student.matric_number},  # level 400
@@ -101,7 +104,8 @@ class ContributionTests(APITestCase):
         self.assertFalse(self.level100_only.has_paid(self.student))
 
     def test_mark_paid_accepts_student_in_the_target_level(self):
-        self._auth(self.rep)
+        # Same-level rep marks a same-level student: OK.
+        self._auth(self.level100_rep)
         r = self.client.post(
             reverse('contribution-payments', args=[self.level100_only.pk]),
             {
@@ -112,6 +116,18 @@ class ContributionTests(APITestCase):
 
         self.assertEqual(r.status_code, 201)
         self.assertTrue(self.level100_only.has_paid(self.level100))
+
+    def test_rep_cannot_mark_a_fee_outside_their_level(self):
+        # A 500-level rep cannot mark a 100-level-only fee at all (403) —
+        # reps manage their own department AND level.
+        self._auth(self.rep)
+        r = self.client.post(
+            reverse('contribution-payments', args=[self.level100_only.pk]),
+            {'matric_number': self.level100.matric_number,
+             'receipt_reference': 'RCPT-LEVEL-403'},
+            format='json')
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(self.level100_only.has_paid(self.level100))
 
     def test_unauthenticated_list_is_401(self):
         self.assertEqual(self.client.get(reverse('contribution-list-create')).status_code, 401)
@@ -151,7 +167,7 @@ class ContributionTests(APITestCase):
             sorted(row.keys()),
             sorted(['id', 'title', 'description', 'amount', 'deadline',
                     'is_mandatory', 'target_level', 'is_closed', 'has_paid',
-                    'created_at']))
+                    'department', 'department_id', 'created_at']))
         self.assertIs(row['has_paid'], False)
         self.assertIs(row['is_closed'], False)
         self.assertEqual(row['amount'], '3500.00')  # string, decimal, exact
@@ -167,13 +183,18 @@ class ContributionTests(APITestCase):
         self.assertEqual(self._post_create(self.student).status_code, 403)
 
     def test_class_rep_can_create(self):
-        r = self._post_create(self.rep)
+        # NOTE: the base payload targets 400 while self.rep is 500 — the
+        # level gate only fires when the levels actually differ, so override
+        # the payload to the rep's own level for the happy path.
+        payload = self._payload()
+        payload['target_level'] = '500'
+        r = self._post_create(self.rep, payload)
         self.assertEqual(r.status_code, 201)
         self.assertEqual(
             sorted(r.data.keys()),
             sorted(['id', 'title', 'description', 'amount', 'deadline',
                     'is_mandatory', 'target_level', 'is_closed', 'has_paid',
-                    'created_at', 'department_id']))
+                    'department', 'department_id', 'created_at']))
         self.assertEqual(r.data['amount'], '5000.00')
         self.assertIs(r.data['has_paid'], False)
         c = Contribution.objects.get(pk=r.data['id'])
@@ -191,12 +212,33 @@ class ContributionTests(APITestCase):
     def test_client_cannot_set_department_or_creator(self):
         self._auth(self.rep)
         payload = self._payload()
+        payload['target_level'] = '500'  # stay in the rep's own level
         payload['department_id'] = self.other_dept.pk  # injection attempt
         r = self.client.post(reverse('contribution-list-create'), payload, format='json')
         self.assertIn(r.status_code, (400, 201))
         if r.status_code == 201:
             saved = Contribution.objects.get(pk=r.data['id'])
             self.assertEqual(saved.department, self.dept)  # server wins
+
+    def test_rep_cannot_create_for_another_level(self):
+        # A 500-level rep creating a 100-level-only fee is an honest 400.
+        self.assertEqual(self._post_create(self.rep).status_code, 400)
+
+    def test_rep_can_create_general_fee(self):
+        # No target_level = everybody's fee = always in the rep's scope.
+        payload = self._payload()
+        payload.pop('target_level')
+        self.assertEqual(self._post_create(self.rep, payload).status_code, 201)
+
+    def test_rep_level_scoped_list(self):
+        # The 500-level rep sees the general fee + the expired general fee
+        # (reps see expired/closed too), but NOT the 100-level-only one.
+        self._auth(self.rep)
+        r = self.client.get(reverse('contribution-list-create'))
+        self.assertEqual(
+            {row['title'] for row in r.data},
+            {'Departmental Shirt 2026', 'Expired Dues'},
+        )
 
     # --- validation ---
 
@@ -243,14 +285,14 @@ class ContributionTests(APITestCase):
     # --- summary ---
 
     def test_summary_totals_are_exact_decimals(self):
-        # Eligible (target_level null): student, level100, rep = 3 (the
-        # admin is exempt — only students/reps pay dues).
+        # Eligible (target_level null): student, level100, rep, level100_rep = 4
+        # (the admin is exempt — only students/reps pay dues).
         self._auth(self.rep)
         r = self.client.get(reverse('contribution-summary', args=[self.contribution.pk]))
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data['total_expected'], '10500.00')
+        self.assertEqual(r.data['total_expected'], '14000.00')
         self.assertEqual(r.data['total_collected'], '0.00')
-        self.assertEqual(r.data['outstanding_count'], 3)
+        self.assertEqual(r.data['outstanding_count'], 4)
 
     def test_summary_scoped_to_department(self):
         self._auth(self.other_student)
@@ -270,8 +312,8 @@ class ContributionTests(APITestCase):
         self._auth(self.rep)
         r = self.client.get(reverse('contribution-payments', args=[self.contribution.pk]))
         self.assertEqual(r.status_code, 200)
-        # 3 rows: student, level100, rep — the admin is NOT owed dues.
-        self.assertEqual(len(r.data), 3)
+        # 4 rows: student, level100, rep, level100_rep — the admin is NOT owed dues.
+        self.assertEqual(len(r.data), 4)
         for row in r.data:
             self.assertEqual(sorted(row.keys()),
                              sorted(['student', 'matric_number', 'status', 'paid_at']))

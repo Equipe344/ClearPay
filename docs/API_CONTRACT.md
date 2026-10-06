@@ -225,19 +225,26 @@ student registration (required `department_id`), and made roster imports fail on
 
 **GET /contributions/**
 ```json
-// Response  200  (students see only open fees for their level; reps/admins see
-// every fee in their department, including closed ones)
+// Response  200  (students see only open fees for their level; class reps see
+// their own department AND level only — general fees plus theirs — and even
+// closed/expired ones; admins/staff see every fee)
 [
   { "id": 5, "title": "Departmental Shirt 2026", "description": "Annual shirt",
     "amount": "3500.00", "deadline": "2026-09-30T23:59:00Z", "is_mandatory": true,
     "target_level": null, "is_closed": false, "has_paid": false,
-    "department_id": 3, "created_at": "2026-09-01T09:00:00Z" }
+    "department": "Computer Science", "department_id": 3,
+    "created_at": "2026-09-01T09:00:00Z" }
 ]
 ```
 `has_paid` is computed per the logged-in student so the frontend doesn't have to.
 `target_level: null` means it applies to every level; otherwise a value like `"400"`
 means only that level sees/owes it. `is_closed` lets reps/admins render closed fees
 greyed-out with a "reopen" action — students never receive closed fees at all.
+
+**`department` (name) + `department_id` are returned on EVERY contribution row**
+(list, create, detail, update) so a rep/admin can always confirm where a fee
+landed — identical-looking rows from different departments are now
+distinguishable at a glance.
 
 **POST /contributions/**  (class rep/admin only)
 ```json
@@ -259,6 +266,11 @@ Class representatives should not send `department_id`: the backend always uses
 their own department. Admins may optionally send it to target another
 department; a system admin without a department must do so.
 
+Class reps are also **level-scoped**: they may only create a fee for their own
+level (a different `target_level` answers `400`), and leave `target_level` blank
+to create a department-wide fee any level can see and pay. Admins have no level
+restriction.
+
 **PATCH /contributions/{id}/**  — Phase 3 (class rep/admin only)
 Partial edit of a fee: send only the fields you're changing. Editable fields are
 `title`, `description`, `amount`, `deadline`, `is_mandatory`, `target_level` and
@@ -271,8 +283,9 @@ to another department; only a system admin may.
 // Response  200 — the full updated row, same shape as GET detail
 { "id": 5, "…": "…", "amount": "6500.00", "is_closed": false }
 ```
-Errors: `403` for students (they can't edit any fee) and `404` for a fee outside
-the caller's department (existence is never leaked across departments). Reopening
+Errors: `403` for students (they can't edit any fee), `403` for a class rep
+editing or closing a fee outside their level, and `404` for a fee outside the
+caller's department (existence is never leaked across departments). Reopening
 a closed fee is just `PATCH { "is_closed": false }` — students see it again and it
 becomes payable, with every historical payment intact.
 

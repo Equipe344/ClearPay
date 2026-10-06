@@ -68,6 +68,16 @@ class ContributionEditAndCloseTests(APITestCase):
         self.assertEqual(self.contribution.amount, Decimal('6500.00'))
         self.assertEqual(response.data['amount'], '6500.00')
 
+    def test_rep_can_patch_includes_department(self):
+        # Assignment stays visible on edit responses too.
+        self._auth(self.rep)
+        response = self.client.patch(
+            self._url(), {'title': 'Excursion Fee (revised)'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['department_id'], self.department.pk)
+        self.assertEqual(response.data['department'], 'Computer Science')
+
     def test_student_cannot_patch_a_fee(self):
         self._auth(self.student)
         response = self.client.patch(
@@ -88,6 +98,25 @@ class ContributionEditAndCloseTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.contribution.refresh_from_db()
         self.assertEqual(self.contribution.title, 'Excursion Fee')
+
+    def test_rep_cannot_patch_another_levels_fee(self):
+        # Same department, wrong level => honest 403 (the fee exists and is
+        # visible as out-of-scope, but the action is refused).
+        other_level_fee = Contribution.objects.create(
+            department=self.department, created_by=self.rep,
+            title='100-Level Only', description='scoped',
+            amount=Decimal('1000.00'),
+            deadline=timezone.now() + timedelta(days=30),
+            is_mandatory=True, target_level='100',
+        )
+        self._auth(self.rep)  # 500-level rep
+        response = self.client.patch(
+            f'/api/contributions/{other_level_fee.id}/',
+            {'title': 'Hijacked'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        other_level_fee.refresh_from_db()
+        self.assertEqual(other_level_fee.title, '100-Level Only')
 
     def test_rep_cannot_move_a_fee_to_another_department(self):
         # Moving a collection to a department you don't own would hand off (or

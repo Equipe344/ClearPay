@@ -7,6 +7,7 @@ tables, no caches, no LLM calls. Every figure is derived from the same model
 methods the contribution summary endpoint uses, so the two can never disagree.
 """
 
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -18,13 +19,23 @@ from apps.users.permissions import IsClassRepOrAdmin
 
 
 def _visible_contributions(user):
-    """Same department scoping rule as the contributions app."""
+    """Same scoping rule as the contributions app.
+
+    * Students/reps reach only their own department's rows.
+    * A class rep additionally only sees their own level's targeted fees
+      (plus general fees) — the same rule edits and marks follow.
+    * Staff/superusers get everything.
+    """
     qs = Contribution.objects.all()
     if user.department_id:
-        return qs.filter(department_id=user.department_id)
-    if user.is_staff or user.is_superuser:
-        return qs
-    return qs.none()
+        qs = qs.filter(department_id=user.department_id)
+    elif not (user.is_staff or user.is_superuser):
+        return qs.none()
+    if user.role == 'class_rep' and user.level:
+        qs = qs.filter(
+            Q(target_level__isnull=True) | Q(target_level=user.level)
+        )
+    return qs
 
 
 def _money(value):

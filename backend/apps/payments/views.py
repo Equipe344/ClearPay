@@ -1032,6 +1032,13 @@ class PendingPaymentsView(APIView):
         # A class rep only reviews their own department's submissions.
         if request.user.role == 'class_rep' and request.user.department_id:
             qs = qs.filter(contribution__department_id=request.user.department_id)
+            # A rep also only reviews their own level: general fees (no
+            # target_level) plus fees targeted at the rep's level.
+            if request.user.level:
+                qs = qs.filter(
+                    Q(contribution__target_level__isnull=True)
+                    | Q(contribution__target_level=request.user.level)
+                )
 
         return Response(
             {
@@ -1069,6 +1076,28 @@ class ReviewPaymentView(APIView):
         ):
             return Response(
                 {'error': 'forbidden', 'message': 'That payment is not in your department.'},
+                status=403,
+            )
+
+        if (
+            request.user.role == 'class_rep'
+            and payment.contribution_id
+            and payment.contribution.target_level
+            and request.user.level != payment.contribution.target_level
+        ):
+            return Response(
+                {'error': 'forbidden', 'message': 'That contribution is not for your level.'},
+                status=403,
+            )
+
+        if (
+            request.user.role == 'class_rep'
+            and payment.contribution_id
+            and payment.contribution.target_level
+            and request.user.level != payment.contribution.target_level
+        ):
+            return Response(
+                {'error': 'forbidden', 'message': 'That contribution is not for your level.'},
                 status=403,
             )
 

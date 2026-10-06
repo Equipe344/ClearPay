@@ -498,11 +498,36 @@ class SetUserRoleView(APIView):
                 {'error': 'forbidden', 'message': 'You cannot change your own role.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        # Scope guard: a class rep can only promote students inside their own
+        # department AND level, so reps stay scoped to the class they actually
+        # represent. A cross-department or cross-level promotion by a rep is an
+        # honest 403. Admins/staff/superusers are never restricted.
+        if request.user.role == User.ROLE_CLASS_REP:
+            if user.department_id != request.user.department_id:
+                return Response(
+                    {'error': 'forbidden', 'message': 'You can only manage users in your own department.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if (
+                user.level
+                and request.user.level
+                and user.level != request.user.level
+            ):
+                return Response(
+                    {'error': 'forbidden', 'message': 'You can only manage users in your own level.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         user.role = role
         user.save(update_fields=['role'])
-        return Response(
-            {'user': {'id': user.id, 'username': user.username, 'role': user.role}}
-        )
+        return Response({
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'role': user.role,
+                'department': user.department.name if user.department_id else None,
+                'level': user.level,
+            }
+        })
 
 
 class UserListView(APIView):

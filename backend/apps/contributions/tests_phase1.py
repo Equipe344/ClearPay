@@ -25,13 +25,16 @@ class ContributionDeadlineContractTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION='Token ' + token.key)
 
     def _payload(self, deadline='2026-10-15T23:59:00Z'):
+
+        # NOTE: self.rep is 500-level, so the payload targets 500 — the rep
+        # level gate rejects creating for another level (see tests.py).
         return {
             'title': 'Excursion Fee',
             'description': 'Trip',
             'amount': '5000.00',
             'deadline': deadline,
             'is_mandatory': True,
-            'target_level': '400',
+            'target_level': '500',
         }
 
     def test_create_rejects_missing_deadline(self):
@@ -81,7 +84,7 @@ class ContributionDepartmentResponseContractTests(APITestCase):
                 'amount': '5000.00',
                 'deadline': '2026-10-15T23:59:00Z',
                 'is_mandatory': True,
-                'target_level': '400',
+                'target_level': '500',
             },
             format='json',
         )

@@ -33,6 +33,31 @@ def _display_name(user):
     return ' '.join(p for p in (user.first_name, user.last_name) if p) or user.username
 
 
+def _rep_level_error(request, contribution):
+    """Refuse a class rep acting outside their own level (403, honest).
+
+    Department scoping is already enforced by the queryset (out-of-department
+    is a 404). This covers the remaining axis: a rep whose level does not
+    match the fee's `target_level` must not edit, close, reopen, or mark
+    students on it. General fees (no target_level) are open to every rep in
+    the department. Admins/staff/superusers are never level-restricted.
+    Returns an error Response, or None when the action may proceed.
+    """
+    if (
+        request.user.role == User.ROLE_CLASS_REP
+        and contribution.target_level
+        and request.user.level != contribution.target_level
+    ):
+        return Response(
+            {
+                'error': 'forbidden',
+                'message': 'That contribution is not for your level.',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 class ContributionListCreateView(generics.ListCreateAPIView):
     serializer_class = ContributionSerializer
 
@@ -54,6 +79,20 @@ class ContributionListCreateView(generics.ListCreateAPIView):
                 )
             else:
                 qs = qs.filter(target_level__isnull=True)
+
+        if (
+            self.request.method == 'GET'
+            and self.request.user.role == User.ROLE_CLASS_REP
+            and self.request.user.level
+        ):
+            # A class rep manages their own department AND their own level: a
+            # 500-level rep must not see (or act on) a 100-level-only fee, and
+            # vice versa. General fees (no target_level) stay visible to all
+            # reps in the department.
+            qs = qs.filter(
+                Q(target_level__isnull=True)
+                | Q(target_level=self.request.user.level)
+            )
 
         return qs
 
@@ -78,6 +117,18 @@ class ContributionListCreateView(generics.ListCreateAPIView):
 
         # Owner + department are ALWAYS set server-side. The client can never
         # spoof who created it or target another department without admin rights.
+        # Level gate: a rep only manages their own level, so creating a fee for
+        # another level is an honest 400. Admins are unrestricted.
+        if (
+            user.role == User.ROLE_CLASS_REP
+            and not (user.is_staff or user.is_superuser)
+            and serializer.validated_data.get('target_level')
+            and user.level
+            and serializer.validated_data.get('target_level') != user.level
+        ):
+            raise serializers.ValidationError(
+                {'target_level': 'You can only create contributions for your own level.'}
+            )
         serializer.save(department=target_department, created_by=user)
 
 
@@ -102,6 +153,16 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return _visible_contributions(self.request.user)
 
+    def update(self, request, *args, **kwargs):
+        # Level gate BEFORE the generic update runs: a rep outside the fee's
+        # target_level gets an honest 403 (not a silent no-op), while admins
+        # and same-level reps flow through to perform_update below.
+        contribution = self.get_object()
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
+        return super().update(request, *args, **kwargs)
+
     def perform_update(self, serializer):
         """
         A rep may never MOVE a fee to another department — that would let them
@@ -113,6 +174,15 @@ class ContributionDetailView(generics.RetrieveUpdateDestroyAPIView):
             serializer.save()
         else:
             serializer.save(department=serializer.instance.department)
+
+    def destroy(self, request, *args, **kwargs):
+        # Same level gate for close/reopen: closing another level's fee (or
+        # reopening it) is a 403 for a rep, while admins flow through.
+        contribution = self.get_object()
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
+        return super().destroy(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
         """
@@ -180,6 +250,12 @@ class ContributionPaymentsView(APIView):
         price.
         """
         contribution = get_object_or_404(_visible_contributions(request.user), pk=pk)
+        # Level gate: a rep outside the fee's target_level gets an honest 403
+        # (same rule as edit/close), while admins and same-level reps proceed.
+        level_error = _rep_level_error(request, contribution)
+        if level_error is not None:
+            return level_error
+
         matric_number = request.data.get('matric_number')
         if not matric_number:
             return Response(

@@ -47,23 +47,30 @@ class ContributionContractTests(APITestCase):
             c for c in response.data if c['id'] == self.contribution.id
         )
         # Contract §3: {id, title, description, amount, deadline, is_mandatory,
-        #               target_level, is_closed, has_paid, created_at}
+        #               target_level, is_closed, has_paid, department,
+        #               department_id, created_at} — department assignment is
+        #               visible on EVERY row so a rep/admin can confirm it.
         self.assertEqual(
             set(item.keys()),
             {'id', 'title', 'description', 'amount', 'deadline', 'is_mandatory',
-             'target_level', 'is_closed', 'has_paid', 'created_at'},
+             'target_level', 'is_closed', 'has_paid', 'department',
+             'department_id', 'created_at'},
         )
         # Money rule: amounts are strings, never floats.
         self.assertEqual(item['amount'], '3500.00')
+        self.assertEqual(item['department'], 'Computer Science')
+        self.assertEqual(item['department_id'], self.department.pk)
         self.assertIsInstance(item['amount'], str)
 
     def test_create_by_rep_returns_201_same_shape(self):
         self._auth(self.rep)
+        # NOTE: self.rep is 500-level, so the payload targets 500 — creating
+        # for another level is a 400 by design (see tests.py).
         response = self.client.post(
             '/api/contributions/',
             {'title': 'Excursion Fee', 'description': 'Trip',
              'amount': '5000.00', 'deadline': '2026-10-15T23:59:00Z',
-             'is_mandatory': True, 'target_level': '400'},
+             'is_mandatory': True, 'target_level': '500'},
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -71,7 +78,7 @@ class ContributionContractTests(APITestCase):
             set(response.data.keys()),
             {'id', 'title', 'description', 'amount', 'deadline', 'is_mandatory',
              'target_level', 'is_closed', 'has_paid', 'created_at',
-             'department_id'},
+             'department', 'department_id'},
         )
         self.assertEqual(response.data['amount'], '5000.00')
 

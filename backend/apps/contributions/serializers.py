@@ -23,16 +23,20 @@ class ContributionSerializer(serializers.ModelSerializer):
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
         source='department',
-        write_only=True,
         required=False,
+    )
+    department = serializers.CharField(
+        source='department.name', read_only=True
     )
 
     class Meta:
         model = Contribution
         # Response shape matches API_CONTRACT.md §3. `created_at` and
         # `description` are returned because the fee list/detail screens render
-        # them; `department_id` is server-chosen and returned on create so the
-        # caller can confirm which department the fee landed in.
+        # them; `department`/`department_id` are returned on EVERY row (not just
+        # create) so a rep/admin can see which department each fee landed in —
+        # without them, an admin's "all departments" list is indistinguishable
+        # blobs and there is no way to confirm assignment.
         fields = [
             'id',
             'title',
@@ -43,10 +47,11 @@ class ContributionSerializer(serializers.ModelSerializer):
             'target_level',
             'is_closed',
             'has_paid',
+            'department',
             'department_id',
             'created_at',
         ]
-        read_only_fields = ['id', 'has_paid', 'created_at']
+        read_only_fields = ['id', 'has_paid', 'department', 'created_at']
         extra_kwargs = {
             'description': {'required': False},
         }
@@ -61,10 +66,15 @@ class ContributionSerializer(serializers.ModelSerializer):
         return strip_tags(value) if value else value
 
     def to_representation(self, instance):
+        # `department`/`department_id` are server-chosen and always returned so
+        # the caller can confirm which department the fee landed in. (They used
+        # to be create-only; the admin's cross-department list then had no way
+        # to show assignment.)
         representation = super().to_representation(instance)
-        request = self.context.get('request')
-        if request is not None and request.method == 'POST':
-            representation['department_id'] = instance.department_id
+        representation['department_id'] = instance.department_id
+        representation['department'] = (
+            instance.department.name if instance.department_id else None
+        )
         return representation
 
     def get_has_paid(self, obj):

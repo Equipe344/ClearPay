@@ -379,7 +379,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             password='S7rong!Passw0rd',
             matric_number='CSC/2026/045',
             department=self.department,
-            level='400',
+            level='500',
         )
 
     def _login(self, user, matric=None):
@@ -404,7 +404,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
                 'amount': '5000.00',
                 'deadline': '2026-12-15T23:59:00Z',
                 'is_mandatory': True,
-                'target_level': '400',
+                'target_level': '500',
             },
             format='json',
             HTTP_AUTHORIZATION='Token ' + rep_token,
@@ -416,7 +416,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             {
                 'id', 'title', 'description', 'amount', 'deadline',
                 'is_mandatory', 'target_level', 'is_closed', 'has_paid',
-                'created_at', 'department_id',
+                'created_at', 'department', 'department_id',
             },
         )
         self.assertEqual(response.data['department_id'], self.department.id)
@@ -451,7 +451,7 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             {
                 'id', 'title', 'description', 'amount', 'deadline',
                 'is_mandatory', 'target_level', 'is_closed', 'has_paid',
-                'created_at',
+                'created_at', 'department', 'department_id',
             },
         )
 
@@ -546,21 +546,25 @@ class FrontendPaymentFlowIntegrationTests(APITestCase):
             f'/api/contributions/{contribution_id}/summary/'
         )
         self.assertEqual(summary_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(summary_response.data['total_expected'], '5000.00')
+        self.assertEqual(summary_response.data['total_expected'], '10000.00')
         self.assertEqual(summary_response.data['total_collected'], '5000.00')
-        self.assertEqual(summary_response.data['outstanding_count'], 0)
+        self.assertEqual(summary_response.data['outstanding_count'], 1)
 
         self.client.credentials(HTTP_AUTHORIZATION='Token ' + rep_token)
         roster_response = self.client.get(
             f'/api/contributions/{contribution_id}/payments/',
         )
         self.assertEqual(roster_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(roster_response.data), 1)
-        self.assertEqual(roster_response.data[0]['student'], 'frontend.student')
-        self.assertEqual(
-            roster_response.data[0]['matric_number'], 'CSC/2026/045'
+        # The rep is also a 500-level member of this level fee, so the roster
+        # shows both the rep and the student.
+        self.assertEqual(len(roster_response.data), 2)
+        student_row = next(
+            r for r in roster_response.data
+            if r['matric_number'] == 'CSC/2026/045'
         )
-        self.assertEqual(roster_response.data[0]['status'], 'success')
+        self.assertEqual(student_row['student'], 'frontend.student')
+        self.assertEqual(student_row['matric_number'], 'CSC/2026/045')
+        self.assertEqual(student_row['status'], 'success')
         self.assertEqual(
             set(roster_response.data[0].keys()),
             {'student', 'matric_number', 'status', 'paid_at'},

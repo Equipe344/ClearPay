@@ -111,7 +111,9 @@ class AnalyticsContractTests(APITestCase):
         )
 
     def test_collection_stats_without_id_covers_the_whole_department(self):
-        # fee: 3 × 5000; level_fee: 1 × 1000 (400-level only) = 16000 expected.
+        # A 500-level rep's analytics scope = general fees + 500-level fees.
+        # `self.fee` is general (3 × 5000); `self.level_fee` targets 400, so
+        # it is OUT of this rep's level scope: 15000 expected.
         self._mark_paid(self.student1, self.fee)
         self._auth(self.rep)
 
@@ -121,9 +123,9 @@ class AnalyticsContractTests(APITestCase):
         self.assertEqual(
             response.data,
             {
-                'total_expected': '16000.00',
+                'total_expected': '15000.00',
                 'total_collected': '5000.00',
-                'outstanding_count': 3,
+                'outstanding_count': 2,
             },
         )
 

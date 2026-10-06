@@ -117,7 +117,7 @@ the app stays in mock mode. Production build: `npm run build` → `dist/`.
 | Role | Can do |
 |---|---|
 | `student` | See department fees, pay online, view own history/receipts, read own notifications, edit own profile, claim an imported account |
-| `class_rep` | Everything a student can, **plus** create fees, view rosters, mark students paid for **offline** payments, issue reset codes |
+| `class_rep` | Everything a student can, **plus** create fees, view rosters, mark students paid for **offline** payments, issue reset codes — all **scoped to their own department AND level** |
 | `admin` | Everything, plus mark-paid for anyone, promote users to rep, import rosters, review refunds. **Exempt from paying dues.** |
 
 > **Note:** a class rep **is a student and still owes dues.** Only admins/staff

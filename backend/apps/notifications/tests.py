@@ -55,7 +55,7 @@ class NotificationTests(APITestCase):
         )
         self.rep = self._u(
             'rep1', 'rep@example.com', 'TEST/2026/004',
-            self.department, '500', User.ROLE_CLASS_REP,
+            self.department, '400', User.ROLE_CLASS_REP,
         )
         self.admin = self._u(
             'admin1', 'admin@example.com', 'TEST/2026/005',
@@ -311,9 +311,14 @@ class NotificationTests(APITestCase):
             notification_type=Notification.TYPE_NEW_CONTRIBUTION,
         )
         recipients = {a.recipient_id for a in alerts}
-        # 400-level students in the rep's department only — not level 100,
-        # not the Law student (eligible_students respects target_level).
-        self.assertEqual(recipients, {self.student.id, self.other_student.id})
+        # 400-level members in the rep's department only — student, other
+        # student and the rep himself (a rep is still a paying member) — not
+        # level 100, not the Law student (eligible_students respects
+        # target_level).
+        self.assertEqual(
+            recipients,
+            {self.student.id, self.other_student.id, self.rep.id},
+        )
         alert = alerts.filter(recipient=self.student).first()
         self.assertEqual(alert.contribution_id, contribution.id)
         self.assertIn('Excursion Fee', alert.message)
